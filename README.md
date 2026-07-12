@@ -1,20 +1,26 @@
 # nflow
 
-A small, opinionated tiling window manager for macOS, written in Rust.
+A tiling window manager and keyboard accessibility toolkit for macOS.
 
-nflow pins each app to a virtual space and tiles its windows into columns, all driven from a single TOML file that reloads automatically. There are no manual window-management hotkeys: switching apps switches spaces, and the layout comes entirely from config. On top of that it adds three keyboard-driven accessibility tools: **hint-mode** (label and click any element on screen), **text-select** (vim-style select-and-copy of visible text), and **scroll-mode** (label and scroll any scroll area with Vim keys).
+nflow pins each app to a virtual space and tiles its windows into columns, all driven from a single TOML file that reloads automatically. No manual window-management hotkeys: switching apps switches spaces, and the layout comes entirely from config.
+
+On top of that, nflow adds three keyboard-driven accessibility tools that let you use macOS without touching the mouse:
+
+- **Hint-mode.** Label every clickable element on screen with a keyboard shortcut, then click, right-click, or copy links without touching the trackpad.
+- **Text-select.** Search for text on screen, anchor a selection, then extend it with Vim motions (h/j/k/l, w/e/b, f/t, and more). Press y to copy.
+- **Scroll-mode.** Label every scroll area in the focused window, then scroll with Vim keys (j/k, c-d/c-u, gg/G). Works everywhere synthetic mouse-wheel events reach.
 
 > Status: early. Built for the author's own daily driving. Expect rough edges.
 
 ## Why
 
-macOS has good apps and bad window management. Tools like AeroSpace and yabai already solve most of this; nflow exists because the author wanted:
+macOS has good apps and bad window management. Tools like AeroSpace and yabai already solve most of the tiling problem. nflow exists because the author wanted:
 
 - **App-pinned spaces.** Each app belongs to a known space. Cmd-Tab to Slack, you land on the Slack space. No mental bookkeeping.
 - **Declarative, not interactive.** The layout is whatever the config says. You change it by editing the config, never by poking windows with hotkeys.
 - **Profiles by screen width.** A laptop layout and an ultrawide layout, picked automatically when the screen changes.
 - **One file, hot reloaded.** Edit `~/.config/nflow/config.toml` and the running daemon picks it up.
-- **Keyboard reach.** Hint-mode and text-select drive the pointer and clipboard from the keyboard.
+- **Keyboard reach.** Hint-mode, text-select, and scroll-mode drive the pointer, clipboard, and scrolling from the keyboard. The goal is to make macOS usable with only a keyboard -- clicking buttons, copying text, and scrolling windows without a mouse or trackpad.
 - **Tiny.** A few thousand lines of Rust over the Accessibility API. Easy to read, easy to change.
 
 ## Requirements
@@ -38,6 +44,43 @@ For verbose logs:
 ```sh
 RUST_LOG=info ./target/release/nflow
 ```
+
+## Accessibility tools
+
+Three of nflow's five hotkey actions are keyboard accessibility tools. They work through the macOS Accessibility API to drive the pointer, clipboard, and scroll wheel from the keyboard.
+
+### Hint-mode: click anything by label
+
+Press the hint-mode hotkey (default `alt-cmd-shift-/`) and every clickable element on screen gets a short label overlaid on it. Type the label to click that element. Esc cancels.
+
+Variants:
+
+- Right-click: `alt-cmd-shift-space` labels elements and performs a right-click.
+- Copy link: `cmd-shift-l` labels every link on screen. Type a label and nflow copies that link as a rich hyperlink (link text + URL). Pasted into Slack, Notion, or any rich editor it renders as a named link rather than a bare URL. Plain-text targets receive just the title.
+
+These bindings are configurable in `config.toml` and visible in the nflow status bar menu.
+
+### Text-select: Vim-style text selection from the keyboard
+
+`text-select` (`cmd-shift-y`) is a search-and-select workflow for any text macOS exposes through the accessibility tree:
+
+1. Trigger it, type a search query, press Return.
+2. Every text element containing the query gets a label. Type a label to anchor the selection on that match.
+3. Extend the selection with Vim motions: `h`/`l` (character), `w`/`e`/`b` (word), `0`/`$` (line start/end), `j`/`k` (line), `f<c>`/`t<c>` (forward to/till a character), `;` (repeat the last `f`/`t`).
+4. Press `y` to copy. Esc cancels at any point.
+
+This sets the application's real selection, so it is exact where the app cooperates (text fields, text areas, Safari) and does nothing in apps that expose no settable text range (many Electron apps, terminals). The copy is taken from the matched text directly, so `y` yields the right string even when an app declines to render the highlight. Selection stays within a single text element; spanning multiple elements is not supported yet.
+
+### Scroll-mode: scroll any scroll area with Vim keys
+
+`scroll-mode` (`cmd-shift-i`) drives scroll areas from the keyboard, for windows that scroll with no keyboard affordance (Outlook's calendar, a chat backlog, a long settings pane):
+
+1. Trigger it. Every scroll area in the focused window gets a label. If there is only one, it is selected automatically.
+2. Type a label to select an area. The cursor warps to its center and a prompt appears.
+3. Scroll with Vim keys: `h`/`j`/`k`/`l` (line left/down/up/right), `c-d`/`c-u` (half page down/up), `gg` (top), `G` (bottom). Holding a key repeats it.
+4. Esc exits and restores the cursor to where it was.
+
+Scrolling is driven by synthetic mouse-wheel events at the area's center, so it works in native, web, and Electron apps alike. `gg`/`G` set the area's scroll-bar position directly where the app exposes it, falling back to a wheel burst otherwise.
 
 ## Configuration
 
@@ -113,7 +156,7 @@ Windows for unmapped apps land on a fresh ad-hoc space.
 
 ### Scenes
 
-Scenes are named overlays on a profile that swap the app layout of individual spaces on demand, without editing config. Use them to flip a profile between modes, for example a coding layout versus a meetings layout, while keeping the same screen-width profile active.
+Scenes are named overlays on a profile that swap the app layout of individual spaces on demand, without editing config. Use them to flip a profile between modes -- for example a coding layout versus a meetings layout -- while keeping the same screen-width profile active.
 
 ```toml
 [profile.ultrawide.scene.coding]
@@ -135,48 +178,20 @@ Bind `apply-scene = "alt-ctrl-{n}"` to switch scenes by number. Scene `0` (`alt-
 
 ### Hotkeys
 
-nflow has no manual window-management hotkeys: spaces switch automatically as you change
-the frontmost app (Cmd-Tab, Dock click, Spotlight), and the per-space layout comes entirely
-from config. All hotkeys are optional; omit one to leave it unbound.
+nflow has no manual window-management hotkeys: spaces switch automatically as you change the frontmost app (Cmd-Tab, Dock click, Spotlight), and the per-space layout comes entirely from config. All hotkeys are optional; omit one to leave it unbound.
 
 Modifiers: `alt`/`option`, `shift`, `ctrl`/`control`, `cmd`/`command`. Patterns:
 
 - `{n}` expands to the digits 1 through 9 (one binding per space)
 
-| Action               | Default              | Effect                                                |
-| -------------------- | -------------------- | ----------------------------------------------------- |
-| hint-mode            | `alt-cmd-shift-/`    | Label every clickable element on screen; type the label to click it (Esc cancels) |
-| hint-mode-right-click | `alt-cmd-shift-space` | Same as hint-mode, but the label performs a right-click          |
-| hint-mode-copy-link  | `cmd-shift-l`        | Label every link on screen; type the label to copy it as a rich hyperlink (title + URL) |
-| text-select          | `cmd-shift-y`        | Vim-style select-and-copy of visible text (Esc cancels)          |
-| scroll-mode          | `cmd-shift-i`        | Label every scroll area in the focused window; type the label, then scroll it with Vim keys (Esc cancels) |
-| apply-scene          | `alt-ctrl-1` ...     | Switch the active profile to scene N (`alt-ctrl-0` restores the default) |
-
-### Copy a link as rich text
-
-`hint-mode-copy-link` labels every link on screen. Type a label and nflow copies that link as a rich hyperlink: the link text plus its URL. Pasted into Slack, Notion, or any rich editor it renders as a named link rather than a bare URL. Handy for grabbing a PR title straight from a GitHub PR list and dropping it into chat. Plain-text targets receive the title.
-
-### Text selection
-
-`text-select` is a Vim-style select-and-copy for any text macOS exposes through the accessibility tree:
-
-1. Trigger it, type a search query, press Return.
-2. Every text element containing the query gets a label. Type a label to anchor the selection on that match.
-3. Extend the selection with Vim motions: `h`/`l` (char), `w`/`e`/`b` (word), `0`/`$` (line start/end), `j`/`k` (line), `f<c>`/`t<c>` (forward to / till a character), `;` (repeat the last `f`/`t`).
-4. Press `y` to copy. `Esc` cancels at any point.
-
-This sets the application's real selection, so it is exact where the app cooperates (text fields, text areas, Safari) and does nothing in apps that expose no settable text range (many Electron apps, terminals). The copy is taken from the matched text directly, so `y` yields the right string even when an app declines to render the highlight. Selection stays within a single text element; spanning multiple elements is not supported yet.
-
-### Scrolling
-
-`scroll-mode` drives scroll areas from the keyboard, for windows that scroll with no keyboard affordance (Outlook's calendar, a chat backlog, a long settings pane):
-
-1. Trigger it. Every scroll area in the focused window gets a label. If there is only one, it is selected automatically.
-2. Type a label to select an area. The cursor warps to its center and a prompt appears.
-3. Scroll with Vim keys: `h`/`j`/`k`/`l` (line left/down/up/right), `c-d`/`c-u` (half page down/up), `gg` (top), `G` (bottom). Holding a key repeats it.
-4. `Esc` exits and restores the cursor to where it was.
-
-Scrolling is driven by synthetic mouse-wheel events at the area's center, so it works in native, web, and Electron apps alike. `gg`/`G` set the area's scroll-bar position directly where the app exposes it, falling back to a wheel burst otherwise.
+| Action                | Default               | Effect                                               |
+| --------------------- | --------------------- | ---------------------------------------------------- |
+| hint-mode             | `alt-cmd-shift-/`     | Label every clickable element on screen; type the label to click it (Esc cancels) |
+| hint-mode-right-click | `alt-cmd-shift-space` | Same as hint-mode, but performs a right-click        |
+| hint-mode-copy-link   | `cmd-shift-l`         | Label every link on screen; type the label to copy it as a rich hyperlink (title + URL) |
+| text-select           | `cmd-shift-y`         | Vim-style select-and-copy of visible text (Esc cancels) |
+| scroll-mode           | `cmd-shift-i`         | Label every scroll area in the focused window; type the label, then scroll it with Vim keys (Esc cancels) |
+| apply-scene           | `alt-ctrl-1` ...      | Switch the active profile to scene N (`alt-ctrl-0` restores the default) |
 
 ### Gaps
 
@@ -184,7 +199,7 @@ Scrolling is driven by synthetic mouse-wheel events at the area's center, so it 
 
 ### Ignored apps
 
-`[ignore]` `apps = [...]` skips windows whose app name matches. Useful for overlays like Raycast, Spotlight, Alfred, 1Password — apps you never want tiled.
+`[ignore]` `apps = [...]` skips windows whose app name matches. Useful for overlays like Raycast, Spotlight, Alfred, 1Password -- apps you never want tiled.
 
 ### Terminal
 
