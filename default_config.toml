@@ -1,0 +1,18 @@
+[hotkeys]
+hint-mode = "alt-cmd-shift-/"
+hint-mode-right-click = "alt-cmd-shift-space"
+hint-mode-copy-link = "cmd-shift-l"
+text-select = "cmd-shift-y"
+scroll-mode = "cmd-shift-i"
+apply-scene = "alt-ctrl-{n}"
+
+terminal = "Ghostty"
+
+[ignore]
+apps = ["Raycast", "Spotlight", "Alfred", "1Password"]
+
+[profile.default]
+screen-width-min = 0
+
+[profile.default.spaces.1]
+apps = []

@@ -1,0 +1,58 @@
+[package]
+name = "nflow"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+core-graphics = "0.24"
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+log = "0.4"
+env_logger = "0.11"
+libc = "0.2"
+objc2 = "0.5"
+objc2-app-kit = { version = "0.2", features = [
+    "NSRunningApplication",
+    "NSWorkspace",
+    "libc",
+    "NSApplication",
+    "NSResponder",
+    "NSView",
+    "NSControl",
+    "NSButton",
+    "NSCell",
+    "NSImage",
+    "NSBezierPath",
+    "NSColor",
+    "NSStatusBar",
+    "NSStatusItem",
+    "NSStatusBarButton",
+    "NSEvent",
+    "NSPasteboard",
+    "NSMenu",
+    "NSMenuItem",
+    "NSWindow",
+    "NSScreen",
+    "NSGraphics",
+    "NSStringDrawing",
+    "NSAttributedString",
+    "NSFont",
+    "NSShadow",
+    "block2",
+] }
+objc2-foundation = { version = "0.2", features = [
+    "NSThread",
+    "NSString",
+    "NSDictionary",
+    "NSGeometry",
+] }
+block2 = "0.5"
+
+[dev-dependencies]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
