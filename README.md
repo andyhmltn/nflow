@@ -233,8 +233,11 @@ src/
   scroll/       scroll-mode: label and scroll scroll areas with Vim keys
   types.rs      core types and errors
 docs/
-  LESSONS.md   macOS quirks worth knowing before hacking
-  plans/       implementation plans for non-trivial features
+  LESSONS.md      macOS quirks worth knowing before hacking
+  tiling.md       Column layout, weights, spaces, and profiles
+  hint-mode.md    Click/right-click/copy-link by keyboard
+  text-select.md  Vim-style text selection via the accessibility tree
+  scroll-mode.md  Keyboard scroll areas
 ```
 
 ## Development
