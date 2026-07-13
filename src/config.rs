@@ -19,6 +19,8 @@ pub struct HotkeyConfig {
     pub text_select: Option<String>,
     #[serde(rename = "scroll-mode", default)]
     pub scroll_mode: Option<String>,
+    #[serde(rename = "menu-search", default)]
+    pub menu_search: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]

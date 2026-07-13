@@ -3,6 +3,7 @@ pub mod config;
 pub mod daemon;
 pub mod hint;
 pub mod hotkey;
+pub mod menusearch;
 pub mod screen;
 pub mod scroll;
 pub mod space;

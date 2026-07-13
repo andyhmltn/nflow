@@ -233,7 +233,8 @@ fn tick(app: &Rc<RefCell<App>>) {
             | Command::HintModeRightClick
             | Command::HintModeCopyLink
             | Command::TextSelect
-            | Command::ScrollMode => {
+            | Command::ScrollMode
+            | Command::MenuSearch => {
                 nflow::hotkey::run_mode_command(&cmd);
             }
             _ => {}
@@ -412,6 +413,7 @@ fn accessibility_shortcuts(hotkeys: &HotkeyConfig) -> Vec<statusbar::MenuShortcu
         ),
         ("Text select", &hotkeys.text_select, Command::TextSelect),
         ("Scroll mode", &hotkeys.scroll_mode, Command::ScrollMode),
+        ("Menu search", &hotkeys.menu_search, Command::MenuSearch),
     ];
     entries
         .into_iter()
@@ -436,6 +438,7 @@ mod tests {
             apply_scene: Some("alt-ctrl-{n}".to_string()),
             hint_mode: Some("alt-cmd-shift-/".to_string()),
             scroll_mode: Some("cmd-shift-i".to_string()),
+            menu_search: Some("alt-cmd-shift-p".to_string()),
             ..HotkeyConfig::default()
         };
         let shortcuts = accessibility_shortcuts(&hotkeys);
@@ -451,6 +454,11 @@ mod tests {
                     title: "Scroll mode".to_string(),
                     pattern: "cmd-shift-i".to_string(),
                     command: Command::ScrollMode,
+                },
+                nflow::statusbar::MenuShortcutEntry {
+                    title: "Menu search".to_string(),
+                    pattern: "alt-cmd-shift-p".to_string(),
+                    command: Command::MenuSearch,
                 },
             ]
         );

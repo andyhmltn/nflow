@@ -98,6 +98,7 @@ pub enum Command {
     HintModeCopyLink,
     TextSelect,
     ScrollMode,
+    MenuSearch,
 }
 
 #[derive(Debug)]

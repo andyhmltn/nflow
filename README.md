@@ -9,6 +9,7 @@ On top of that, nflow adds three keyboard-driven accessibility tools that let yo
 - **Hint-mode.** Label every clickable element on screen with a keyboard shortcut, then click, right-click, or copy links without touching the trackpad.
 - **Text-select.** Search for text on screen, anchor a selection, then extend it with Vim motions (h/j/k/l, w/e/b, f/t, and more). Press y to copy.
 - **Scroll-mode.** Label every scroll area in the focused window, then scroll with Vim keys (j/k, c-d/c-u, gg/G). Works everywhere synthetic mouse-wheel events reach.
+- **Menu-search.** A fuzzy command palette over the frontmost app's menu bar. Search every menu item by name, or type its hint code to fire it instantly.
 
 > Status: early. Built for the author's own daily driving. Expect rough edges.
 
@@ -20,7 +21,7 @@ macOS has good apps and bad window management. Tools like AeroSpace and yabai al
 - **Declarative, not interactive.** The layout is whatever the config says. You change it by editing the config, never by poking windows with hotkeys.
 - **Profiles by screen width.** A laptop layout and an ultrawide layout, picked automatically when the screen changes.
 - **One file, hot reloaded.** Edit `~/.config/nflow/config.toml` and the running daemon picks it up.
-- **Keyboard reach.** Hint-mode, text-select, and scroll-mode drive the pointer, clipboard, and scrolling from the keyboard. The goal is to make macOS usable with only a keyboard -- clicking buttons, copying text, and scrolling windows without a mouse or trackpad.
+- **Keyboard reach.** Hint-mode, text-select, scroll-mode, and menu-search drive the pointer, clipboard, scrolling, and menu bar from the keyboard. The goal is to make macOS usable with only a keyboard -- clicking buttons, copying text, scrolling windows, and firing menu commands without a mouse or trackpad.
 - **Tiny.** A few thousand lines of Rust over the Accessibility API. Easy to read, easy to change.
 
 ## Requirements
@@ -82,6 +83,15 @@ This sets the application's real selection, so it is exact where the app coopera
 
 Scrolling is driven by synthetic mouse-wheel events at the area's center, so it works in native, web, and Electron apps alike. `gg`/`G` set the area's scroll-bar position directly where the app exposes it, falling back to a wheel burst otherwise.
 
+### Menu-search: fuzzy palette over the menu bar
+
+`menu-search` (`alt-cmd-shift-p`) is a command palette for the active app's menu bar. Trigger it and nflow collects every pressable, enabled leaf in the frontmost app's menus (File > Save, View > Enter Full Screen, ...), assigns each a stable hint code, and renders a centered palette:
+
+1. **Search phase** (default): type a query and the list fuzzy-filters live, with matched characters highlighted. Navigate with `ctrl-j`/`ctrl-k` (also arrow keys and `ctrl-n`/`ctrl-p`); `Enter` fires the highlighted item. `Backspace` edits the query.
+2. Press `Esc` to drop into **Code phase**: the query clears and the full list is shown with its codes. Type a hint code to fire that item instantly, hint-mode style (`Backspace` edits, `Enter` fires the first match). `Esc` again exits.
+
+Selecting an item performs `AXPress` on its `AXMenuItem` -- the same action macOS posts when you click the entry -- so it works in native, web, and Electron apps that expose a real menu bar. Vim-style navigation (`ctrl-j`/`ctrl-k`) keeps your hands on the home row; the hint codes let you skip the search entirely once you've learned a command's code.
+
 ## Configuration
 
 Config lives at `~/.config/nflow/config.toml`. Example:
@@ -93,6 +103,7 @@ hint-mode-right-click = "alt-cmd-shift-space"
 hint-mode-copy-link   = "cmd-shift-l"
 text-select           = "cmd-shift-y"
 scroll-mode           = "cmd-shift-i"
+menu-search           = "alt-cmd-shift-p"
 apply-scene           = "alt-ctrl-{n}"
 
 terminal = "Ghostty"
@@ -191,6 +202,7 @@ Modifiers: `alt`/`option`, `shift`, `ctrl`/`control`, `cmd`/`command`. Patterns:
 | hint-mode-copy-link   | `cmd-shift-l`         | Label every link on screen; type the label to copy it as a rich hyperlink (title + URL) |
 | text-select           | `cmd-shift-y`         | Vim-style select-and-copy of visible text (Esc cancels) |
 | scroll-mode           | `cmd-shift-i`         | Label every scroll area in the focused window; type the label, then scroll it with Vim keys (Esc cancels) |
+| menu-search           | `alt-cmd-shift-p`     | Fuzzy command palette over the frontmost app's menu bar; search or type a hint code to fire a menu item (Esc cancels) |
 | apply-scene           | `alt-ctrl-1` ...      | Switch the active profile to scene N (`alt-ctrl-0` restores the default) |
 
 ### Gaps
@@ -231,6 +243,7 @@ src/
   hint/         hint-mode: label and click/right-click/copy-link screen elements
   textselect/   vim-style keyboard text selection
   scroll/       scroll-mode: label and scroll scroll areas with Vim keys
+  menusearch/   menu-search: fuzzy command palette over the menu bar
   types.rs      core types and errors
 docs/
   LESSONS.md      macOS quirks worth knowing before hacking
@@ -238,6 +251,7 @@ docs/
   hint-mode.md    Click/right-click/copy-link by keyboard
   text-select.md  Vim-style text selection via the accessibility tree
   scroll-mode.md  Keyboard scroll areas
+  menu-search.md  Fuzzy command palette over the menu bar
 ```
 
 ## Development

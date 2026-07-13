@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::Mutex;
 
 use crate::config::HotkeyConfig;
-use crate::types::{Command, nflowError, Result};
+use crate::types::{nflowError, Command, Result};
 
 pub const OPTION_KEY: u32 = 0x0800;
 pub const SHIFT_KEY: u32 = 0x0200;
@@ -42,6 +42,11 @@ fn key_to_keycode(key: &str) -> Option<u32> {
         "y" => Some(0x10),
         "t" => Some(0x11),
         "i" => Some(0x22),
+        "o" => Some(0x1F),
+        "u" => Some(0x20),
+        "p" => Some(0x23),
+        "m" => Some(0x2E),
+        "n" => Some(0x2D),
         "1" => Some(0x12),
         "2" => Some(0x13),
         "3" => Some(0x14),
@@ -208,6 +213,7 @@ pub fn build_bindings(config: &HotkeyConfig) -> Result<Vec<HotkeyBinding>> {
         (&config.hint_mode_copy_link, Command::HintModeCopyLink),
         (&config.text_select, Command::TextSelect),
         (&config.scroll_mode, Command::ScrollMode),
+        (&config.menu_search, Command::MenuSearch),
     ];
     for (maybe_pattern, command) in optional {
         if let Some(pattern) = maybe_pattern {
@@ -346,6 +352,10 @@ pub fn run_mode_command(cmd: &Command) -> bool {
         crate::scroll::toggle(crate::screen::get_full_screen_rect());
         return true;
     }
+    if *cmd == Command::MenuSearch {
+        crate::menusearch::toggle();
+        return true;
+    }
     false
 }
 
@@ -407,6 +417,18 @@ unsafe extern "C" fn event_tap_callback(
                 modifiers,
                 keycode == ESC_KEYCODE || keycode == Q_KEYCODE,
                 keycode == DELETE_KEYCODE,
+            );
+            return std::ptr::null_mut();
+        }
+
+        if crate::menusearch::is_active() {
+            crate::menusearch::handle_key(
+                keycode,
+                typed_char(event),
+                modifiers,
+                keycode == ESC_KEYCODE,
+                keycode == DELETE_KEYCODE,
+                keycode == RETURN_KEYCODE,
             );
             return std::ptr::null_mut();
         }
@@ -726,9 +748,10 @@ mod tests {
             hint_mode_copy_link: Some("cmd-shift-l".to_string()),
             text_select: Some("cmd-shift-y".to_string()),
             scroll_mode: Some("cmd-shift-i".to_string()),
+            menu_search: Some("alt-cmd-shift-p".to_string()),
         };
         let bindings = build_bindings(&config).unwrap();
-        assert_eq!(bindings.len(), 15);
+        assert_eq!(bindings.len(), 16);
 
         let scenes = bindings
             .iter()

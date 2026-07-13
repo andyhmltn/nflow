@@ -109,6 +109,7 @@ extern "C" {
         result: *mut CFTypeRef,
     ) -> AXError;
     fn AXValueCreate(the_type: u32, value_ptr: *const std::ffi::c_void) -> CFTypeRef;
+    fn AXUIElementPerformAction(element: AXUIElementRef, action: CFStringRef) -> AXError;
     fn CFRelease(cf: CFTypeRef);
     fn CFRetain(cf: CFTypeRef) -> CFTypeRef;
     fn CFURLGetString(url: CFTypeRef) -> CFStringRef;
@@ -126,9 +127,119 @@ pub struct AxElement(AXUIElementRef);
 unsafe impl Send for AxElement {}
 
 impl AxElement {
-    fn retain(raw: AXUIElementRef) -> Self {
+    pub(crate) fn retain(raw: AXUIElementRef) -> Self {
         unsafe { CFRetain(raw as CFTypeRef) };
         AxElement(raw)
+    }
+
+    pub fn bool_attr(&self, attribute: &str) -> Option<bool> {
+        let attr = make_cf_string(attribute);
+        if attr.is_null() {
+            return None;
+        }
+        unsafe {
+            let mut value: CFTypeRef = std::ptr::null();
+            let err = AXUIElementCopyAttributeValue(self.0, attr, &mut value);
+            CFRelease(attr as CFTypeRef);
+            if err != 0 || value.is_null() {
+                return None;
+            }
+            let is_true = value == core_foundation_sys::number::kCFBooleanTrue as CFTypeRef;
+            CFRelease(value);
+            Some(is_true)
+        }
+    }
+
+    pub fn string_attr(&self, attribute: &str) -> Option<String> {
+        ax_get_string_attribute(self.0, attribute)
+    }
+
+    /// Read a single-valued element attribute (e.g. `AXMenuBar`, `AXFocusedWindow`)
+    /// and retain it into a new `AxElement`.
+    pub fn attr_element(&self, attribute: &str) -> Option<AxElement> {
+        let attr = make_cf_string(attribute);
+        if attr.is_null() {
+            return None;
+        }
+        unsafe {
+            let mut value: CFTypeRef = std::ptr::null();
+            let err = AXUIElementCopyAttributeValue(self.0, attr, &mut value);
+            CFRelease(attr as CFTypeRef);
+            if err != 0 || value.is_null() {
+                return None;
+            }
+            let child = AxElement::retain(value as AXUIElementRef);
+            CFRelease(value);
+            Some(child)
+        }
+    }
+
+    /// Direct children (AXChildren). Each is retained into a new `AxElement`.
+    pub fn children(&self) -> Vec<AxElement> {
+        let attr = make_cf_string("AXChildren");
+        if attr.is_null() {
+            return Vec::new();
+        }
+        let children_value = unsafe {
+            let mut value: CFTypeRef = std::ptr::null();
+            let err = AXUIElementCopyAttributeValue(self.0, attr, &mut value);
+            CFRelease(attr as CFTypeRef);
+            if err != 0 || value.is_null() {
+                return Vec::new();
+            }
+            value
+        };
+        let out = unsafe {
+            let array = children_value as CFArrayRef;
+            let count = CFArrayGetCount(array);
+            let mut items = Vec::with_capacity(count as usize);
+            for i in 0..count {
+                let child = CFArrayGetValueAtIndex(array, i) as AXUIElementRef;
+                if child.is_null() {
+                    continue;
+                }
+                items.push(AxElement::retain(child));
+            }
+            items
+        };
+        unsafe { CFRelease(children_value) };
+        out
+    }
+
+    pub fn has_action(&self, action: &str) -> bool {
+        unsafe {
+            let mut names: CFArrayRef = std::ptr::null();
+            let err = AXUIElementCopyActionNames(self.0, &mut names);
+            if err != 0 || names.is_null() {
+                return false;
+            }
+            let count = CFArrayGetCount(names);
+            let mut found = false;
+            for i in 0..count {
+                let name = CFArrayGetValueAtIndex(names, i) as CFStringRef;
+                if name.is_null() {
+                    continue;
+                }
+                let cf = CFString::wrap_under_get_rule(name);
+                #[allow(clippy::cmp_owned)]
+                if cf.to_string() == action {
+                    found = true;
+                    break;
+                }
+            }
+            CFRelease(names as CFTypeRef);
+            found
+        }
+    }
+
+    pub fn press(&self) -> bool {
+        let attr = make_cf_string("AXPress");
+        if attr.is_null() {
+            return false;
+        }
+        let err = unsafe { AXUIElementPerformAction(self.0, attr) };
+        unsafe { CFRelease(attr as CFTypeRef) };
+        err == 0
     }
 
     pub fn url(&self) -> Option<String> {
@@ -267,6 +378,15 @@ impl Drop for AxElement {
     }
 }
 
+/// Create a retained `AxElement` for an application by PID.
+pub(crate) fn make_app_element(pid: i32) -> Option<AxElement> {
+    let raw = unsafe { AXUIElementCreateApplication(pid) };
+    if raw.is_null() {
+        return None;
+    }
+    Some(AxElement::retain(raw))
+}
+
 fn nonempty_string(element: AXUIElementRef, attribute: &str) -> Option<String> {
     let value = ax_get_string_attribute(element, attribute)?;
     let trimmed = value.trim();
@@ -320,7 +440,7 @@ fn descendant_text(element: AXUIElementRef, depth: u32) -> Option<String> {
     found
 }
 
-fn make_cf_string(s: &str) -> CFStringRef {
+pub(crate) fn make_cf_string(s: &str) -> CFStringRef {
     let Ok(c_str) = CString::new(s) else {
         return std::ptr::null();
     };
@@ -479,7 +599,7 @@ fn ax_get_frame(element: AXUIElementRef) -> Option<Rect> {
     })
 }
 
-fn ax_get_string_attribute(element: AXUIElementRef, attribute: &str) -> Option<String> {
+pub(crate) fn ax_get_string_attribute(element: AXUIElementRef, attribute: &str) -> Option<String> {
     let attr = make_cf_string(attribute);
     if attr.is_null() {
         return None;
