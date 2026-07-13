@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::types::{nflowError, Result, SpaceId};
+use crate::types::{NflowError, Result, SpaceId};
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Default)]
 pub struct HotkeyConfig {
@@ -82,12 +82,12 @@ pub struct Config {
 }
 
 pub fn parse_config_str(s: &str) -> Result<Config> {
-    toml::from_str(s).map_err(|e| nflowError::ConfigParse(e.to_string()))
+    toml::from_str(s).map_err(|e| NflowError::ConfigParse(e.to_string()))
 }
 
 pub fn parse_config_file(path: &Path) -> Result<Config> {
     let contents =
-        std::fs::read_to_string(path).map_err(|e| nflowError::ConfigParse(e.to_string()))?;
+        std::fs::read_to_string(path).map_err(|e| NflowError::ConfigParse(e.to_string()))?;
     parse_config_str(&contents)
 }
 

@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::Mutex;
 
 use crate::config::HotkeyConfig;
-use crate::types::{nflowError, Command, Result};
+use crate::types::{NflowError, Command, Result};
 
 pub const OPTION_KEY: u32 = 0x0800;
 pub const SHIFT_KEY: u32 = 0x0200;
@@ -144,14 +144,14 @@ pub fn menu_shortcut(pattern: &str) -> Option<MenuShortcut> {
 
 pub fn parse_hotkey(input: &str) -> Result<ParsedHotkey> {
     if input.is_empty() {
-        return Err(nflowError::ConfigParse(
+        return Err(NflowError::ConfigParse(
             "hotkey string is empty".to_string(),
         ));
     }
 
     let parts: Vec<&str> = input.split('-').collect();
     if parts.is_empty() {
-        return Err(nflowError::ConfigParse(
+        return Err(NflowError::ConfigParse(
             "hotkey string is empty".to_string(),
         ));
     }
@@ -160,12 +160,12 @@ pub fn parse_hotkey(input: &str) -> Result<ParsedHotkey> {
     let modifier_parts = &parts[..parts.len() - 1];
 
     let keycode = key_to_keycode(key)
-        .ok_or_else(|| nflowError::ConfigParse(format!("unknown key: {key}")))?;
+        .ok_or_else(|| NflowError::ConfigParse(format!("unknown key: {key}")))?;
 
     let mut modifiers: u32 = 0;
     for modifier in modifier_parts {
         let flag = modifier_to_flag(modifier)
-            .ok_or_else(|| nflowError::ConfigParse(format!("unknown modifier: {modifier}")))?;
+            .ok_or_else(|| NflowError::ConfigParse(format!("unknown modifier: {modifier}")))?;
         modifiers |= flag;
     }
 
@@ -479,7 +479,7 @@ pub fn register_hotkeys(bindings: &[HotkeyBinding]) -> Result<()> {
     };
 
     if tap.is_null() {
-        return Err(nflowError::HotkeyRegistration(
+        return Err(NflowError::HotkeyRegistration(
             "CGEventTapCreate failed -- ensure Accessibility permission is granted".into(),
         ));
     }

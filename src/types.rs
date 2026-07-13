@@ -102,7 +102,7 @@ pub enum Command {
 }
 
 #[derive(Debug)]
-pub enum nflowError {
+pub enum NflowError {
     AccessibilityNotEnabled,
     ConfigParse(String),
     ConfigWatch(String),
@@ -126,9 +126,9 @@ impl fmt::Display for nflowError {
     }
 }
 
-impl std::error::Error for nflowError {}
+impl std::error::Error for NflowError {}
 
-pub type Result<T> = std::result::Result<T, nflowError>;
+pub type Result<T> = std::result::Result<T, NflowError>;
 
 #[cfg(test)]
 mod tests {

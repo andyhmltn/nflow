@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use core_graphics::display::{CGDisplay, CGDisplayReconfigurationCallBack};
 
-use crate::types::{nflowError, Rect, Result};
+use crate::types::{NflowError, Rect, Result};
 
 const MENU_BAR_HEIGHT: f64 = 25.0;
 const K_CG_DISPLAY_BEGIN_CONFIGURATION_FLAG: u32 = 1 << 0;
@@ -52,7 +52,7 @@ pub fn register_screen_change_callback() -> Result<()> {
     if result == 0 {
         Ok(())
     } else {
-        Err(nflowError::ScreenDetection(format!(
+        Err(NflowError::ScreenDetection(format!(
             "CGDisplayRegisterReconfigurationCallback returned {result}"
         )))
     }

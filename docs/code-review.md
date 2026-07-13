@@ -88,7 +88,7 @@ impl Default for GapsConfig {                   // unnecessary
 
 ### Dead enum variants are *not* future-proofing
 
-`nflowError` had `WindowNotFound(WindowId)` and `SpaceNotFound(SpaceId)`
+`NflowError` had `WindowNotFound(WindowId)` and `SpaceNotFound(SpaceId)`
 variants that were never constructed anywhere. AI tends to add "complete-looking"
 enum coverage. In practice, dead variants:
 
@@ -137,7 +137,7 @@ The `extern "C"` blocks in `hotkey.rs`, `ax.rs`, and `screen.rs` are
 
 **What it does.** Shared data types — window/space ID aliases, `Rect`,
 `Column`, `LayoutTree` (the tiling tree), `Command` enum, `PendingSplit`
-enum, `nflowError`, and the `Result<T>` alias.
+enum, `NflowError`, and the `Result<T>` alias.
 
 ### Patterns worth absorbing
 
@@ -145,14 +145,14 @@ enum, `nflowError`, and the `Result<T>` alias.
   function signature `fn focus(&mut self, w: WindowId)` document intent. If
   you ever need to swap to `u64`, one line changes.
 - **Crate-local `Result` alias.** `pub type Result<T> = std::result::Result<T,
-  nflowError>;` removes the `nflowError` repetition from function
+  NflowError>;` removes the `NflowError` repetition from function
   signatures and is the standard Rust pattern. Most large crates do this.
 - **`impl Display` + `impl std::error::Error` for the error enum.** Required
-  to use `nflowError` with `?` against any other `Box<dyn Error>` boundary.
+  to use `NflowError` with `?` against any other `Box<dyn Error>` boundary.
 
 ### Changes applied
 
-- Removed `nflowError::WindowNotFound` and `nflowError::SpaceNotFound`
+- Removed `NflowError::WindowNotFound` and `NflowError::SpaceNotFound`
   — never constructed. If a future caller needs them, add them then.
 
 ### Things considered, not changed
