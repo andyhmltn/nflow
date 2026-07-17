@@ -37,9 +37,7 @@ const MAX_FILTERED: usize = 200;
 enum SessionPhase {
     Search {
         query: String,
-        /// Indices into `items`, sorted best-match first.
         filtered: Vec<usize>,
-        /// Index into `filtered`.
         selected: usize,
     },
     Code {
@@ -131,6 +129,9 @@ pub fn handle_key(
         } => {
             if is_return {
                 if let Some(&item_idx) = filtered.get(*selected) {
+                    if !session.items[item_idx].enabled {
+                        return;
+                    }
                     let pressed = session.items[item_idx].element.press();
                     drop(guard);
                     end_session();
@@ -140,7 +141,6 @@ pub fn handle_key(
                 }
                 return;
             }
-            // Vim-style navigation: ctrl-j/ctrl-k, ctrl-n/ctrl-p, arrow keys.
             if ctrl || is_arrow(keycode) {
                 if let Some(delta) = nav_delta(keycode, ctrl) {
                     let len = filtered.len();
@@ -227,7 +227,6 @@ fn end_session() {
     }
 }
 
-/// Recompute the filtered list for the current query (Search phase only).
 fn recompute(session: &mut Session) {
     let SessionPhase::Search {
         query, filtered, ..
@@ -239,15 +238,13 @@ fn recompute(session: &mut Session) {
         *filtered = (0..session.items.len()).collect();
         return;
     }
-    let q = query.to_ascii_lowercase();
     let mut scored: Vec<(i64, usize)> = Vec::new();
     for (idx, item) in session.items.iter().enumerate() {
-        let Some(m) = fuzzy::match_query(&q, &item.display) else {
+        let Some(m) = fuzzy::match_query(query, &item.display) else {
             continue;
         };
         scored.push((m.score, idx));
     }
-    // Best score first; break ties by breadcrumb order for a stable feel.
     scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
     *filtered = scored
         .into_iter()
@@ -275,16 +272,15 @@ fn build_snapshot(session: &Session) -> MenuSnapshot {
         } => {
             let top = window_top(*selected, filtered.len());
             let end = (top + MAX_VISIBLE_ROWS).min(filtered.len());
-            let q = query.to_ascii_lowercase();
             filtered[top..end]
                 .iter()
                 .enumerate()
                 .map(|(vis, &item_idx)| {
                     let item = &session.items[item_idx];
-                    let positions = if q.is_empty() {
+                    let positions = if query.is_empty() {
                         Vec::new()
                     } else {
-                        fuzzy::match_query(&q, &item.display)
+                        fuzzy::match_query(query, &item.display)
                             .map(|m| m.positions)
                             .unwrap_or_default()
                     };
@@ -339,10 +335,9 @@ fn window_top(selected: usize, len: usize) -> usize {
 }
 
 fn is_arrow(keycode: u32) -> bool {
-    matches!(keycode, 0x7D | 0x7E) // down / up
+    matches!(keycode, 0x7D | 0x7E)
 }
 
-/// Returns a vertical delta for navigation keys, or `None` if not a nav key.
 fn nav_delta(keycode: u32, ctrl: bool) -> Option<isize> {
     if ctrl {
         match crate::hotkey::char_for_keycode(keycode)? {
@@ -351,9 +346,9 @@ fn nav_delta(keycode: u32, ctrl: bool) -> Option<isize> {
             _ => None,
         }
     } else if keycode == 0x7D {
-        Some(1) // down arrow
+        Some(1)
     } else if keycode == 0x7E {
-        Some(-1) // up arrow
+        Some(-1)
     } else {
         None
     }
@@ -384,7 +379,6 @@ mod tests {
 
     #[test]
     fn ctrl_jk_navigate() {
-        // j = 0x26, k = 0x28
         assert_eq!(nav_delta(0x26, true), Some(1));
         assert_eq!(nav_delta(0x28, true), Some(-1));
     }

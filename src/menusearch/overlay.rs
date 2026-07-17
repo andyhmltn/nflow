@@ -25,12 +25,9 @@ use objc2_foundation::{
 pub struct MenuRow {
     pub code: String,
     pub display: String,
-    /// Character indices within `display` that the query matched (bright).
     pub matched_positions: Vec<usize>,
     pub selected: bool,
-    /// Dimmed: shown but inactive (non-matching code in code phase).
     pub dim: bool,
-    /// Greyed out: the underlying menu item is disabled.
     pub disabled: bool,
 }
 
@@ -124,7 +121,6 @@ impl MenuOverlayView {
             NSSize::new(panel_width, panel_height),
         );
 
-        // Panel background.
         let bg = unsafe { NSColor::colorWithSRGBRed_green_blue_alpha(0.07, 0.08, 0.11, 0.96) };
         let border = unsafe { NSColor::colorWithSRGBRed_green_blue_alpha(0.35, 0.40, 0.50, 0.55) };
         unsafe {
@@ -140,7 +136,6 @@ impl MenuOverlayView {
             path.stroke();
         }
 
-        // Prompt row.
         let prompt_y = panel_y + PADDING;
         let bright = unsafe { NSColor::colorWithSRGBRed_green_blue_alpha(0.96, 0.97, 1.0, 1.0) };
         let dim = unsafe { NSColor::colorWithSRGBRed_green_blue_alpha(0.45, 0.48, 0.55, 1.0) };
@@ -183,7 +178,6 @@ impl MenuOverlayView {
         }
         let query_width = unsafe { query_ns.sizeWithAttributes(Some(&bright_attrs)) }.width;
 
-        // Block cursor at the end of the query.
         if state.cursor_visible {
             let cursor_rect = NSRect::new(
                 NSPoint::new(query_origin.x + query_width + 1.0, prompt_y + 6.0),
@@ -198,7 +192,6 @@ impl MenuOverlayView {
             }
         }
 
-        // Separator under the prompt.
         let sep_y = prompt_y + PROMPT_HEIGHT - 6.0;
         unsafe {
             let line_color = NSColor::colorWithSRGBRed_green_blue_alpha(0.30, 0.34, 0.42, 0.55);
@@ -210,18 +203,16 @@ impl MenuOverlayView {
             line.stroke();
         }
 
-        // Rows.
         let text_x = panel_x + PADDING + BADGE_WIDTH + TEXT_GAP;
         let text_max_width = panel_x + panel_width - PADDING - text_x;
 
         for (i, row) in state.rows.iter().enumerate() {
             let row_y = sep_y + 8.0 + i as f64 * ROW_HEIGHT;
-            draw_row(row, panel_x, row_y, text_x, text_max_width, &style);
+            draw_row(row, panel_x, panel_width, row_y, text_x, text_max_width, &style);
         }
     }
 }
 
-/// Shared text-drawing resources for a row.
 struct RowStyle {
     font: Retained<NSFont>,
     advance: f64,
@@ -233,6 +224,7 @@ struct RowStyle {
 fn draw_row(
     row: &MenuRow,
     panel_x: f64,
+    panel_width: f64,
     row_y: f64,
     text_x: f64,
     text_max_width: f64,
@@ -246,7 +238,7 @@ fn draw_row(
     if let Some(bg) = bg {
         let row_rect = NSRect::new(
             NSPoint::new(panel_x + 4.0, row_y - 2.0),
-            NSSize::new(PANEL_WIDTH - 8.0, ROW_HEIGHT - 2.0),
+            NSSize::new(panel_width - 8.0, ROW_HEIGHT - 2.0),
         );
         unsafe {
             let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(row_rect, 5.0, 5.0);
@@ -255,7 +247,6 @@ fn draw_row(
         }
     }
 
-    // Code badge.
     let badge_rect = NSRect::new(
         NSPoint::new(
             panel_x + PADDING,
@@ -308,7 +299,6 @@ fn draw_row(
         badge_label.drawAtPoint_withAttributes(badge_text_origin, Some(&badge_attrs));
     }
 
-    // Display text, char by char, highlighting matched positions.
     let matched: std::collections::HashSet<usize> = row.matched_positions.iter().copied().collect();
     let mut x = text_x;
     let baseline_y = row_y + (ROW_HEIGHT - FONT_SIZE) / 2.0 - 1.0;
@@ -340,7 +330,6 @@ fn char_advance(font: &Retained<NSFont>) -> f64 {
     };
     let probe = NSString::from_str("M");
     let size = unsafe { probe.sizeWithAttributes(Some(&attrs)) };
-    // Round to a crisp half-pixel; monospace gives a fixed advance.
     (size.width).max(1.0)
 }
 

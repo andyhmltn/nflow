@@ -26,20 +26,15 @@ use objc2_foundation::{
 #[derive(Debug, Clone)]
 pub struct PluckRow {
     pub display: String,
-    /// Character indices within `display` that the query matched (bright).
     pub matched_positions: Vec<usize>,
     pub selected: bool,
-    /// Toggled with `Tab` for multi-copy.
     pub marked: bool,
-    /// The candidate has a markdown rendering (links). Shown as a small `md`
-    /// marker at the row's right edge so `ctrl-m` is discoverable.
     pub md: bool,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct PluckSnapshot {
     pub query: String,
-    /// `words` / `lines`, shown at the right edge of the prompt row.
     pub mode: String,
     pub cursor_visible: bool,
     pub rows: Vec<PluckRow>,
@@ -161,7 +156,6 @@ impl PluckOverlayView {
             accent_attrs: accent_attrs.clone(),
         };
 
-        // Prompt row.
         let prompt_y = panel_y + PADDING;
         let label = NSString::from_str("pluck");
         let label_origin = NSPoint::new(panel_x + PADDING, prompt_y + 9.0);
@@ -192,7 +186,6 @@ impl PluckOverlayView {
             }
         }
 
-        // Mode indicator at the right edge of the prompt row.
         let mode_label = NSString::from_str(&format!("[{}]", state.mode));
         let mode_width = unsafe { mode_label.sizeWithAttributes(Some(&dim_attrs)) }.width;
         let mode_origin =
@@ -210,7 +203,6 @@ impl PluckOverlayView {
             line.stroke();
         }
 
-        // Rows.
         let text_x = panel_x + PADDING + MARK_WIDTH;
         let text_max_width = panel_x + panel_width - PADDING - text_x - MARK_WIDTH;
         for (i, row) in state.rows.iter().enumerate() {
@@ -226,7 +218,6 @@ impl PluckOverlayView {
             );
         }
 
-        // Footer cheatsheet.
         let footer_y = sep_y + 8.0 + row_count as f64 * ROW_HEIGHT + 6.0;
         let footer = if state.marked_count > 0 {
             format!(
@@ -279,7 +270,6 @@ fn draw_row(
         }
     }
 
-    // Mark indicator.
     if row.marked {
         let mark = NSString::from_str("●");
         let mark_color =
@@ -300,7 +290,6 @@ fn draw_row(
         };
     }
 
-    // Display text, char by char, highlighting matched positions.
     let matched: std::collections::HashSet<usize> = row.matched_positions.iter().copied().collect();
     let mut x = text_x;
     let baseline_y = row_y + (ROW_HEIGHT - FONT_SIZE) / 2.0 - 1.0;
@@ -320,9 +309,6 @@ fn draw_row(
         emitted += style.advance;
     }
 
-    // Markdown indicator at the row's right edge: shown when the candidate has
-    // a markdown rendering (i.e. it's a reconstructed line containing links),
-    // so `ctrl-m` is discoverable.
     if row.md {
         let md_color = unsafe { NSColor::colorWithSRGBRed_green_blue_alpha(0.55, 0.75, 0.95, 0.9) };
         let keys = [unsafe { NSFontAttributeName }, unsafe {

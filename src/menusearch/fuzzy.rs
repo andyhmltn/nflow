@@ -33,9 +33,6 @@ fn is_boundary(prev: Option<char>, cur: char) -> bool {
     }
 }
 
-/// Returns the best fuzzy match of `query` inside `text`, or `None` if `query`
-/// is not a subsequence of `text`. An empty query is treated as "matches
-/// everything with zero score and no positions".
 pub fn match_query(query: &str, text: &str) -> Option<FuzzyMatch> {
     let q: Vec<char> = query.chars().map(|c| c.to_ascii_lowercase()).collect();
     let t: Vec<char> = text.chars().map(|c| c.to_ascii_lowercase()).collect();
@@ -54,7 +51,6 @@ pub fn match_query(query: &str, text: &str) -> Option<FuzzyMatch> {
     let m = t.len();
     let neg_inf = i64::MIN / 4;
 
-    // dp[i][j] = best score matching q[0..=i] ending with q[i] matched at t[j].
     let mut dp = vec![vec![neg_inf; m]; n];
     let mut back: Vec<Vec<Option<usize>>> = vec![vec![None; m]; n];
 
@@ -111,19 +107,15 @@ pub fn match_query(query: &str, text: &str) -> Option<FuzzyMatch> {
     let (end, &best_score) = last_row
         .iter()
         .enumerate()
-        .rev()
         .max_by_key(|(_, s)| *s)
         .filter(|(_, s)| **s != neg_inf)?;
-    if best_score == neg_inf {
-        return None;
-    }
 
     let mut positions = Vec::with_capacity(n);
     positions.push(end);
     let mut i = n - 1;
     let mut j = end;
     while i > 0 {
-        let k = back[i][j]?; // The previous match position.
+        let k = back[i][j]?;
         positions.push(k);
         i -= 1;
         j = k;
@@ -166,8 +158,6 @@ mod tests {
 
     #[test]
     fn prefers_word_boundary_match() {
-        // "sa" at the start of "Save" (a word boundary) should beat "sa"
-        // buried mid-word inside "basalt" (no boundary, leading gap).
         let boundary = match_query("sa", "Save").unwrap();
         let interior = match_query("sa", "basalt").unwrap();
         assert!(boundary.score > interior.score);

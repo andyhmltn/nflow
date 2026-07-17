@@ -180,7 +180,7 @@ pub fn expand_hotkey_pattern(pattern: &str) -> Result<Vec<String>> {
             let suffix = &pattern[end + 1..];
 
             if inner == "n" {
-                let expanded = (1u8..=9).map(|n| format!("{prefix}{n}{suffix}")).collect();
+                let expanded = (0u8..=9).map(|n| format!("{prefix}{n}{suffix}")).collect();
                 return Ok(expanded);
             }
 
@@ -690,9 +690,9 @@ mod tests {
     #[test]
     fn expand_n_pattern() {
         let expanded = expand_hotkey_pattern("alt-{n}").unwrap();
-        assert_eq!(expanded.len(), 9);
-        assert_eq!(expanded[0], "alt-1");
-        assert_eq!(expanded[8], "alt-9");
+        assert_eq!(expanded.len(), 10);
+        assert_eq!(expanded[0], "alt-0");
+        assert_eq!(expanded[9], "alt-9");
     }
 
     #[test]
@@ -708,9 +708,9 @@ mod tests {
     #[test]
     fn expand_shift_n_pattern() {
         let expanded = expand_hotkey_pattern("alt-shift-{n}").unwrap();
-        assert_eq!(expanded.len(), 9);
-        assert_eq!(expanded[0], "alt-shift-1");
-        assert_eq!(expanded[8], "alt-shift-9");
+        assert_eq!(expanded.len(), 10);
+        assert_eq!(expanded[0], "alt-shift-0");
+        assert_eq!(expanded[9], "alt-shift-9");
     }
 
     #[test]

@@ -35,19 +35,12 @@ const MAX_VISIBLE_ROWS: usize = 14;
 const MAX_FILTERED: usize = 200;
 
 struct Session {
-    /// Reconstructed visual lines, computed once at collection time. Mode
-    /// switches re-tokenise over these without re-walking the accessibility
-    /// tree.
     lines: Vec<collect::Line>,
-    /// Candidates for the current `mode`.
     candidates: Vec<Candidate>,
     mode: Mode,
     query: String,
-    /// Indices into `candidates`, sorted best-match first.
     filtered: Vec<usize>,
-    /// Index into `filtered`.
     selected: usize,
-    /// Indices into `candidates` toggled with `Tab` for multi-copy.
     marked: HashSet<usize>,
     overlay: PluckOverlay,
 }
@@ -108,10 +101,6 @@ pub fn handle_key(
 
     let ctrl = modifiers & crate::hotkey::CONTROL_KEY != 0;
 
-    // ctrl-f cycles the tokenisation mode, keeping the current query so the
-    // user can re-filter the other granularity without retyping.
-    // ctrl-m copies the selection rendered as markdown (links as `[text](url)`);
-    // it falls back to the plain text when a candidate has no markdown form.
     if ctrl {
         if let Some(ch) = crate::hotkey::char_for_keycode(keycode) {
             if ch == 'f' {
@@ -171,7 +160,6 @@ pub fn handle_key(
         return;
     }
 
-    // Vim-style navigation: ctrl-j/ctrl-k, ctrl-n/ctrl-p, arrow keys.
     if ctrl || is_arrow(keycode) {
         if let Some(delta) = nav_delta(keycode, ctrl) {
             let len = session.filtered.len();
@@ -186,7 +174,6 @@ pub fn handle_key(
         }
     }
 
-    // Tab toggles a mark on the highlighted row for multi-copy.
     if is_tab(keycode) {
         if let Some(&item_idx) = session.filtered.get(session.selected) {
             if !session.marked.insert(item_idx) {
@@ -223,7 +210,6 @@ fn end_session() {
     }
 }
 
-/// Recompute the filtered list for the current query.
 fn recompute(session: &mut Session) {
     if session.query.is_empty() {
         session.filtered = session
@@ -234,15 +220,13 @@ fn recompute(session: &mut Session) {
             .collect();
         return;
     }
-    let q = session.query.to_ascii_lowercase();
     let mut scored: Vec<(i64, usize)> = Vec::new();
     for (idx, candidate) in session.candidates.iter().enumerate() {
-        let Some(m) = crate::menusearch::fuzzy::match_query(&q, &candidate.display) else {
+        let Some(m) = crate::menusearch::fuzzy::match_query(&session.query, &candidate.display) else {
             continue;
         };
         scored.push((m.score, idx));
     }
-    // Best score first; break ties by original order for a stable feel.
     scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
     session.filtered = scored
         .into_iter()
@@ -259,18 +243,16 @@ fn render(session: &Session) {
 fn build_snapshot(session: &Session) -> PluckSnapshot {
     let top = window_top(session.selected, session.filtered.len());
     let end = (top + MAX_VISIBLE_ROWS).min(session.filtered.len());
-    let q = session.query.to_ascii_lowercase();
-
     let rows: Vec<PluckRow> = session.filtered[top..end]
         .iter()
         .enumerate()
         .map(|(vis, &item_idx)| {
             let candidate = &session.candidates[item_idx];
             let display = candidate.display.clone();
-            let positions = if q.is_empty() {
+            let positions = if session.query.is_empty() {
                 Vec::new()
             } else {
-                crate::menusearch::fuzzy::match_query(&q, &display)
+                crate::menusearch::fuzzy::match_query(&session.query, &display)
                     .map(|m| m.positions)
                     .unwrap_or_default()
             };
@@ -293,8 +275,6 @@ fn build_snapshot(session: &Session) -> PluckSnapshot {
     }
 }
 
-/// The text to copy on `Enter`: every marked token if any are marked, otherwise
-/// the highlighted token. Marked tokens are joined with the mode's separator.
 fn join_selection(
     candidates: &[Candidate],
     filtered: &[usize],
@@ -304,7 +284,6 @@ fn join_selection(
 ) -> Option<String> {
     let sep = collect::join_separator(mode);
     if !marked.is_empty() {
-        // Preserve filtered (score) order for the joined output.
         let mut picked: Vec<&str> = Vec::new();
         for &item_idx in filtered {
             if marked.contains(&item_idx) {
@@ -321,10 +300,6 @@ fn join_selection(
         .map(|&i| candidates[i].display.clone())
 }
 
-/// The text to copy on `ctrl-m`: like `join_selection` but each candidate is
-/// rendered as markdown (links as `[text](url)`) when it has one, falling back
-/// to the plain text otherwise. Always joins with a newline, since markdown
-/// copy is line-oriented.
 fn join_selection_markdown(
     candidates: &[Candidate],
     filtered: &[usize],
@@ -358,14 +333,13 @@ fn window_top(selected: usize, len: usize) -> usize {
 }
 
 fn is_arrow(keycode: u32) -> bool {
-    matches!(keycode, 0x7D | 0x7E) // down / up
+    matches!(keycode, 0x7D | 0x7E)
 }
 
 fn is_tab(keycode: u32) -> bool {
     keycode == 0x30
 }
 
-/// Returns a vertical delta for navigation keys, or `None` if not a nav key.
 fn nav_delta(keycode: u32, ctrl: bool) -> Option<isize> {
     if ctrl {
         match crate::hotkey::char_for_keycode(keycode)? {
@@ -374,9 +348,9 @@ fn nav_delta(keycode: u32, ctrl: bool) -> Option<isize> {
             _ => None,
         }
     } else if keycode == 0x7D {
-        Some(1) // down arrow
+        Some(1)
     } else if keycode == 0x7E {
-        Some(-1) // up arrow
+        Some(-1)
     } else {
         None
     }
@@ -393,10 +367,6 @@ fn write_plain(text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn s(s: &str) -> String {
-        s.to_string()
-    }
 
     fn cand(display: &str, md: Option<&str>) -> Candidate {
         Candidate {
@@ -436,7 +406,6 @@ mod tests {
             cand("gamma", None),
             cand("delta", None),
         ];
-        // Reverse the filtered order so gamma (idx 2) comes before alpha (idx 0).
         let filtered = vec![2, 0, 3, 1];
         let marked = HashSet::from([0, 2]);
         assert_eq!(
@@ -510,7 +479,6 @@ mod tests {
 
     #[test]
     fn ctrl_jk_navigate() {
-        // j = 0x26, k = 0x28
         assert_eq!(nav_delta(0x26, true), Some(1));
         assert_eq!(nav_delta(0x28, true), Some(-1));
     }

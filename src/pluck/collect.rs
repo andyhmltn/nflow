@@ -30,13 +30,8 @@ use std::collections::HashSet;
 use crate::hint::collect::{self, AxElement};
 use crate::types::Rect;
 
-/// Tokens shorter than this are discarded. Five matches the terminal `pluck`:
-/// it keeps the palette to meaningful words rather than every `a`, `the`, `of`.
 const MIN_TOKEN_LEN: usize = 5;
 
-/// Pieces whose horizontal gap exceeds this are treated as a new visual line,
-/// even when they overlap vertically. Catches text that wraps to a new column
-/// or sits in a sidebar.
 const LINE_GAP: f64 = 40.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,8 +56,6 @@ impl Mode {
     }
 }
 
-/// A single inline text piece with its screen geometry. A link piece carries
-/// its URL so the line can be rendered as markdown.
 #[derive(Debug, Clone)]
 pub struct Piece {
     pub text: String,
@@ -71,8 +64,6 @@ pub struct Piece {
     pub url: Option<String>,
 }
 
-/// A reconstructed visual line: the plain text of its pieces joined, and the
-/// same pieces kept so a markdown rendering can be produced on demand.
 #[derive(Debug, Clone)]
 pub struct Line {
     pub plain: String,
@@ -80,9 +71,6 @@ pub struct Line {
 }
 
 impl Line {
-    /// Render the line as markdown: each link piece becomes `[text](url)`,
-    /// plain pieces contribute their text verbatim. Returns `None` when the
-    /// line contains no links (the plain text is sufficient).
     pub fn markdown(&self) -> Option<String> {
         if !self.pieces.iter().any(|p| p.url.is_some()) {
             return None;
@@ -103,7 +91,6 @@ impl Line {
     }
 }
 
-/// Walk every on-screen window and gather text + link pieces.
 pub fn collect_pieces(screen: Rect) -> Vec<Piece> {
     let mut out = Vec::new();
     for target in collect::collect_text_and_link_targets(screen) {
@@ -130,9 +117,6 @@ pub fn collect_pieces(screen: Rect) -> Vec<Piece> {
 }
 
 fn element_text(element: &AxElement) -> String {
-    // Links often expose their visible label via AXTitle/AXDescription rather
-    // than AXValue; fall back to value (and to descendant text for grouped
-    // links) the same way hint-mode's copy-link does.
     if is_link_element(element) {
         if let Some(t) = element.link_text() {
             return t;
@@ -145,16 +129,11 @@ fn is_link_element(element: &AxElement) -> bool {
     element.string_attr("AXRole").as_deref() == Some("AXLink")
 }
 
-/// Reconstruct visual lines from collected pieces. Pieces are grouped by
-/// window, then sorted by reading order (top-to-bottom, left-to-right), then
-/// merged into a line while they share a vertical band and stay within
-/// `LINE_GAP` horizontally of the running line's right edge.
 pub fn reconstruct_lines(pieces: Vec<Piece>) -> Vec<Line> {
     if pieces.is_empty() {
         return Vec::new();
     }
 
-    // Group by window id so text from adjacent tiled windows never merges.
     let mut by_window: Vec<(Option<u32>, Vec<Piece>)> = Vec::new();
     for p in pieces {
         if let Some(slot) = by_window.iter_mut().find(|(w, _)| *w == p.window_id) {
@@ -166,7 +145,6 @@ pub fn reconstruct_lines(pieces: Vec<Piece>) -> Vec<Line> {
 
     let mut lines: Vec<Line> = Vec::new();
     for (_, mut group) in by_window {
-        // Reading order: top by line-center, then left by left edge.
         group.sort_by(|a, b| {
             let ay = a.frame.y + a.frame.height / 2.0;
             let by = b.frame.y + b.frame.height / 2.0;
@@ -212,9 +190,6 @@ fn v_overlap(a: &Rect, b: &Rect) -> bool {
     let b_top = b.y;
     let b_bottom = b.y + b.height;
     let overlap = a_bottom.min(b_bottom) - a_top.max(b_top);
-    // Require the smaller element to overlap the larger by at least half its
-    // height, so a small superscript or footnote marker on the same line is
-    // absorbed but a genuinely different line is not.
     let smaller = a.height.min(b.height);
     overlap >= smaller * 0.5
 }
@@ -225,10 +200,6 @@ fn join_line(pieces: Vec<Piece>) -> Line {
     for p in &pieces {
         if let Some(prev) = prev {
             let gap = p.frame.x - (prev.frame.x + prev.frame.width);
-            // Insert a space when pieces don't already touch and neither side
-            // carries its own whitespace. Skip the space when the next piece
-            // starts with punctuation (`.`, `,`, ...) so "Patty" + "." reads as
-            // "Patty." rather than "Patty .".
             let starts_with_punct = p.text.chars().next().is_some_and(|c| {
                 matches!(
                     c,
@@ -249,20 +220,12 @@ fn join_line(pieces: Vec<Piece>) -> Line {
     Line { plain, pieces }
 }
 
-/// A palette candidate. `markdown` is `Some` only for line-mode candidates
-/// reconstructed from pieces that include links, so `ctrl-m` can copy the line
-/// with links rendered as `[text](url)`.
 #[derive(Debug, Clone)]
 pub struct Candidate {
     pub display: String,
     pub markdown: Option<String>,
 }
 
-/// Tokenise the collected lines into deduplicated candidates for `mode`,
-/// preserving first-seen order so the palette is stable across keystrokes.
-/// Words come from the plain text (no markdown); lines come from the
-/// reconstructed visual lines (so a line that mixes text and links still
-/// appears whole, and carries its markdown rendering when it has links).
 pub fn extract(lines: &[Line], mode: Mode) -> Vec<Candidate> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
@@ -284,7 +247,6 @@ pub fn extract(lines: &[Line], mode: Mode) -> Vec<Candidate> {
     out
 }
 
-/// The join separator used when copying multiple marked tokens at once.
 pub fn join_separator(mode: Mode) -> &'static str {
     match mode {
         Mode::Words => " ",
@@ -302,9 +264,6 @@ fn tokenize(value: &str, mode: Mode) -> Vec<String> {
     }
 }
 
-/// Strip surrounding brackets/quotes and trailing sentence punctuation, the
-/// same trimming the terminal `pluck` uses so `(foo),` and `foo:` collapse to
-/// `foo`.
 fn trim_token(token: &str) -> &str {
     let stripped = token.trim_matches(|c| {
         matches!(
@@ -436,7 +395,6 @@ mod tests {
             .map(|c| c.display)
             .collect();
         assert!(out.contains(&"Patty".to_string()));
-        // Words never carry markdown.
         assert!(extract(&lines, Mode::Words)
             .iter()
             .all(|c| c.markdown.is_none()));

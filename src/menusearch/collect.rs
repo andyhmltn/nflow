@@ -18,12 +18,7 @@ const COLLECT_BUDGET: Duration = Duration::from_millis(400);
 const MAX_ITEMS: usize = 2000;
 const MAX_DEPTH: u32 = 32;
 
-#[allow(dead_code)]
 pub struct MenuItem {
-    pub title: String,
-    /// Breadcrumb of submenu titles leading to this item, e.g. `["File"]`.
-    pub path: Vec<String>,
-    /// `path > title`, precomputed for matching and rendering.
     pub display: String,
     pub element: AxElement,
     pub enabled: bool,
@@ -38,8 +33,6 @@ pub fn collect_menu_items() -> Vec<MenuItem> {
         None => return Vec::new(),
     };
 
-    // The menu bar lives on the app element's `AXMenuBar` attribute. Its
-    // children are the top-level menus (Apple, File, Edit, ...).
     let menu_bar = match app.attr_element("AXMenuBar") {
         Some(m) => m,
         None => return Vec::new(),
@@ -77,7 +70,6 @@ fn walk(
             .map(|t| t.trim().to_string())
             .unwrap_or_default();
 
-        // Separator items and the like have no title and no press action.
         let sub = child.children();
         if sub.is_empty() {
             if title.is_empty() || !child.has_action("AXPress") {
@@ -90,8 +82,6 @@ fn walk(
                 format!("{} > {}", path.join(" > "), title)
             };
             out.push(MenuItem {
-                title,
-                path: path.to_vec(),
                 display,
                 element: child,
                 enabled,
