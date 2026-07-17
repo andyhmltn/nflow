@@ -49,3 +49,5 @@ cp -R "$APP" "$DEST/$APP_NAME.app"
 rm -rf "$BUILD_DIR"
 
 echo "Done. Launch via the 'nflow' command or $DEST/$APP_NAME.app"
+
+nflow restart

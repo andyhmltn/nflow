@@ -95,13 +95,13 @@ Selecting an item performs `AXPress` on its `AXMenuItem` -- the same action macO
 
 ### Pluck: fuzzy-find any text on screen
 
-`pluck` (`alt-cmd-shift-o`) is a fuzzy finder over all the visible text on screen. Trigger it and nflow collects every text element the accessibility tree exposes across all on-screen windows, tokenises it into words (or lines), and renders a centered palette:
+`pluck` (`alt-cmd-shift-o`) is a fuzzy finder over all the visible text on screen. Trigger it and nflow collects every text and link element the accessibility tree exposes across all on-screen windows, reconstructs visual lines (so a sentence split across static text and inline links appears whole), tokenises it into words (or lines), and renders a centered palette:
 
 1. Type a query and the list fuzzy-filters live, with matched characters highlighted. Navigate with `ctrl-j`/`ctrl-k` (also arrow keys and `ctrl-n`/`ctrl-p`).
 2. `Enter` copies the highlighted token to the clipboard and exits. `Tab` toggles a mark on the highlighted row for multi-copy; `Enter` then copies every marked token (words joined with a space, lines with a newline).
-3. `ctrl-f` cycles the tokenisation mode between **words** and **lines**, keeping the current query. `Backspace` edits the query. `Esc` exits without copying.
+3. `ctrl-f` cycles the tokenisation mode between **words** and **lines**, keeping the current query. `ctrl-m` copies the selection as **markdown**, expanding links to `[text](url)` (rows with a markdown form show an `md` marker). `Backspace` edits the query. `Esc` exits without copying.
 
-It is the screen-wide analogue of a terminal fuzzy-finder: where that fuzzes a pane backlog, pluck fuzzes the whole display. Words are trimmed of surrounding brackets and quotes and must be at least five characters, which keeps the palette to meaningful tokens. Pluck reuses text-select's text collector and menu-search's fuzzy matcher, so it sees exactly what the accessibility tree sees and ranks the same way.
+It is the screen-wide analogue of a terminal fuzzy-finder: where that fuzzes a pane backlog, pluck fuzzes the whole display. Because links are collected alongside static text and visual lines are reconstructed from their geometry, a Wikipedia hatnote like "...see Patty. For other uses, see Hamburger (disambiguation)." appears as one candidate and can be copied plain (`Enter`) or as markdown with both links expanded (`ctrl-m`). Words are trimmed of surrounding brackets and quotes and must be at least five characters, which keeps the palette to meaningful tokens. Pluck reuses hint-mode's text/link collector and menu-search's fuzzy matcher, so it sees exactly what the accessibility tree sees and ranks the same way.
 
 ## Configuration
 
@@ -215,7 +215,7 @@ Modifiers: `alt`/`option`, `shift`, `ctrl`/`control`, `cmd`/`command`. Patterns:
 | text-select           | `cmd-shift-y`         | Vim-style select-and-copy of visible text (Esc cancels) |
 | scroll-mode           | `cmd-shift-i`         | Label every scroll area in the focused window; type the label, then scroll it with Vim keys (Esc cancels) |
 | menu-search           | `alt-cmd-shift-p`     | Fuzzy command palette over the frontmost app's menu bar; search or type a hint code to fire a menu item (Esc cancels) |
-| pluck                 | `alt-cmd-shift-o`     | Fuzzy-find any visible text on screen; copy the highlighted token (or marked tokens) to the clipboard (Esc cancels) |
+| pluck                 | `alt-cmd-shift-o`     | Fuzzy-find any visible text on screen; copy the highlighted token (or marked tokens) to the clipboard, plain or as markdown with links (Esc cancels) |
 | apply-scene           | `alt-ctrl-1` ...      | Switch the active profile to scene N (`alt-ctrl-0` restores the default) |
 
 ### Gaps

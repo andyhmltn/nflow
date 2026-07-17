@@ -278,6 +278,19 @@ impl AxElement {
         ax_get_string_attribute(self.0, "AXValue")
     }
 
+    /// The CG window id this element belongs to, used to group pieces that
+    /// belong to the same window (so line reconstruction doesn't merge text
+    /// across adjacent tiled windows).
+    pub fn window_id(&self) -> Option<u32> {
+        let mut id: u32 = 0;
+        let err = unsafe { _AXUIElementGetWindow(self.0, &mut id) };
+        if err == 0 && id != 0 {
+            Some(id)
+        } else {
+            None
+        }
+    }
+
     pub fn set_vertical_fraction(&self, fraction: f64) -> bool {
         self.set_scroll_bar_fraction("AXVerticalScrollBar", fraction)
     }
@@ -1051,6 +1064,24 @@ pub fn collect_text_targets(screen: Rect) -> Vec<HintTarget> {
     walker.walk_windows(front);
 
     finish(walker, screen, start, "text")
+}
+
+/// Collect both text and link elements in a single walk. Used by pluck, which
+/// needs links (their text and URL) alongside static text so it can reconstruct
+/// visual lines that mix the two -- e.g. a Wikipedia hatnote where "Patty" and
+/// "Hamburger (disambiguation)" are links inside running prose.
+pub fn collect_text_and_link_targets(screen: Rect) -> Vec<HintTarget> {
+    let start = Instant::now();
+    let front = frontmost_pid();
+
+    let mut walker = Walker::new(is_text_or_link, true);
+    walker.walk_windows(front);
+
+    finish(walker, screen, start, "text+link")
+}
+
+fn is_text_or_link(element: AXUIElementRef) -> bool {
+    is_text(element) || is_link(element)
 }
 
 fn enable_manual_accessibility(pid: i32) -> bool {

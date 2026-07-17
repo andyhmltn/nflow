@@ -1,14 +1,17 @@
 //! Pluck: a fuzzy finder over all the visible text on screen.
 //!
-//! Trigger the hotkey and nflow collects every text element the accessibility
-//! tree exposes across all on-screen windows, tokenises it into words (or
-//! lines), and renders a centered palette. Type to fuzzy-filter, navigate with
-//! `ctrl-j`/`ctrl-k`, and press `Enter` to copy the highlighted token (or every
-//! `Tab`-marked token) to the clipboard. `ctrl-f` cycles the tokenisation mode.
+//! Trigger the hotkey and nflow collects every text and link element the
+//! accessibility tree exposes across all on-screen windows, reconstructs visual
+//! lines (so a sentence split across static text and inline links appears
+//! whole), tokenises it into words (or lines), and renders a centered palette.
+//! Type to fuzzy-filter, navigate with `ctrl-j`/`ctrl-k`, and press `Enter` to
+//! copy the highlighted token (or every `Tab`-marked token) to the clipboard.
+//! `ctrl-f` cycles the tokenisation mode; `ctrl-m` copies the selection rendered
+//! as markdown, with links expanded to `[text](url)`.
 //!
-//! Pluck reuses hint-mode's text collector (`collect_text_targets`) and
-//! menu-search's fuzzy matcher, so it sees exactly what the accessibility tree
-//! sees and ranks candidates the same way menu-search ranks menu items.
+//! Pluck reuses hint-mode's text/link collector and menu-search's fuzzy
+//! matcher, so it sees exactly what the accessibility tree sees and ranks
+//! candidates the same way menu-search ranks menu items.
 
 mod collect;
 mod overlay;
@@ -20,7 +23,7 @@ use std::sync::Mutex;
 use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
 use objc2_foundation::{MainThreadMarker, NSString};
 
-use collect::Mode;
+use collect::{Candidate, Mode};
 use overlay::{PluckOverlay, PluckRow, PluckSnapshot};
 
 use crate::types::Rect;
@@ -32,11 +35,12 @@ const MAX_VISIBLE_ROWS: usize = 14;
 const MAX_FILTERED: usize = 200;
 
 struct Session {
-    /// Cached `AXValue` strings, read once at collection time. Mode switches
-    /// re-tokenise over these without re-walking the accessibility tree.
-    values: Vec<String>,
+    /// Reconstructed visual lines, computed once at collection time. Mode
+    /// switches re-tokenise over these without re-walking the accessibility
+    /// tree.
+    lines: Vec<collect::Line>,
     /// Candidates for the current `mode`.
-    candidates: Vec<String>,
+    candidates: Vec<Candidate>,
     mode: Mode,
     query: String,
     /// Indices into `candidates`, sorted best-match first.
@@ -59,20 +63,21 @@ pub fn toggle(screen: Rect) {
     if is_active() {
         return;
     }
-    let values = collect::collect_text_values(screen);
-    if values.is_empty() {
+    let pieces = collect::collect_pieces(screen);
+    let lines = collect::reconstruct_lines(pieces);
+    if lines.is_empty() {
         crate::toast::show("No text on screen");
         return;
     }
-    let mode = Mode::Words;
-    let candidates = collect::extract(&values, mode);
+    let mode = Mode::Lines;
+    let candidates = collect::extract(&lines, mode);
     if candidates.is_empty() {
         crate::toast::show("No text on screen");
         return;
     }
     let overlay = PluckOverlay::show();
     let mut session = Session {
-        values,
+        lines,
         candidates,
         mode,
         query: String::new(),
@@ -105,6 +110,8 @@ pub fn handle_key(
 
     // ctrl-f cycles the tokenisation mode, keeping the current query so the
     // user can re-filter the other granularity without retyping.
+    // ctrl-m copies the selection rendered as markdown (links as `[text](url)`);
+    // it falls back to the plain text when a candidate has no markdown form.
     if ctrl {
         if let Some(ch) = crate::hotkey::char_for_keycode(keycode) {
             if ch == 'f' {
@@ -113,11 +120,30 @@ pub fn handle_key(
                     return;
                 };
                 session.mode = session.mode.next();
-                session.candidates = collect::extract(&session.values, session.mode);
+                session.candidates = collect::extract(&session.lines, session.mode);
                 session.marked.clear();
                 session.selected = 0;
                 recompute(session);
                 render(session);
+                return;
+            }
+            if ch == 'm' {
+                let mut guard = SESSION.lock().unwrap_or_else(|e| e.into_inner());
+                let Some(session) = guard.as_mut() else {
+                    return;
+                };
+                let to_copy = join_selection_markdown(
+                    &session.candidates,
+                    &session.filtered,
+                    session.selected,
+                    &session.marked,
+                );
+                drop(guard);
+                if let Some(text) = to_copy {
+                    write_plain(&text);
+                    crate::toast::show("Copied markdown");
+                }
+                end_session();
                 return;
             }
         }
@@ -211,7 +237,7 @@ fn recompute(session: &mut Session) {
     let q = session.query.to_ascii_lowercase();
     let mut scored: Vec<(i64, usize)> = Vec::new();
     for (idx, candidate) in session.candidates.iter().enumerate() {
-        let Some(m) = crate::menusearch::fuzzy::match_query(&q, candidate) else {
+        let Some(m) = crate::menusearch::fuzzy::match_query(&q, &candidate.display) else {
             continue;
         };
         scored.push((m.score, idx));
@@ -239,7 +265,8 @@ fn build_snapshot(session: &Session) -> PluckSnapshot {
         .iter()
         .enumerate()
         .map(|(vis, &item_idx)| {
-            let display = session.candidates[item_idx].clone();
+            let candidate = &session.candidates[item_idx];
+            let display = candidate.display.clone();
             let positions = if q.is_empty() {
                 Vec::new()
             } else {
@@ -252,6 +279,7 @@ fn build_snapshot(session: &Session) -> PluckSnapshot {
                 matched_positions: positions,
                 selected: vis == (session.selected - top),
                 marked: session.marked.contains(&item_idx),
+                md: candidate.markdown.is_some(),
             }
         })
         .collect();
@@ -268,7 +296,7 @@ fn build_snapshot(session: &Session) -> PluckSnapshot {
 /// The text to copy on `Enter`: every marked token if any are marked, otherwise
 /// the highlighted token. Marked tokens are joined with the mode's separator.
 fn join_selection(
-    candidates: &[String],
+    candidates: &[Candidate],
     filtered: &[usize],
     selected: usize,
     marked: &HashSet<usize>,
@@ -280,7 +308,7 @@ fn join_selection(
         let mut picked: Vec<&str> = Vec::new();
         for &item_idx in filtered {
             if marked.contains(&item_idx) {
-                picked.push(&candidates[item_idx]);
+                picked.push(&candidates[item_idx].display);
             }
         }
         if picked.is_empty() {
@@ -288,7 +316,35 @@ fn join_selection(
         }
         return Some(picked.join(sep));
     }
-    filtered.get(selected).map(|&i| candidates[i].clone())
+    filtered
+        .get(selected)
+        .map(|&i| candidates[i].display.clone())
+}
+
+/// The text to copy on `ctrl-m`: like `join_selection` but each candidate is
+/// rendered as markdown (links as `[text](url)`) when it has one, falling back
+/// to the plain text otherwise. Always joins with a newline, since markdown
+/// copy is line-oriented.
+fn join_selection_markdown(
+    candidates: &[Candidate],
+    filtered: &[usize],
+    selected: usize,
+    marked: &HashSet<usize>,
+) -> Option<String> {
+    let render = |c: &Candidate| c.markdown.clone().unwrap_or_else(|| c.display.clone());
+    if !marked.is_empty() {
+        let mut picked: Vec<String> = Vec::new();
+        for &item_idx in filtered {
+            if marked.contains(&item_idx) {
+                picked.push(render(&candidates[item_idx]));
+            }
+        }
+        if picked.is_empty() {
+            return None;
+        }
+        return Some(picked.join("\n"));
+    }
+    filtered.get(selected).map(|&i| render(&candidates[i]))
 }
 
 fn window_top(selected: usize, len: usize) -> usize {
@@ -342,6 +398,13 @@ mod tests {
         s.to_string()
     }
 
+    fn cand(display: &str, md: Option<&str>) -> Candidate {
+        Candidate {
+            display: display.to_string(),
+            markdown: md.map(str::to_string),
+        }
+    }
+
     #[test]
     fn window_top_keeps_selection_centered() {
         assert_eq!(window_top(20, 100), 13);
@@ -356,7 +419,7 @@ mod tests {
 
     #[test]
     fn selection_copies_highlighted_when_none_marked() {
-        let candidates = vec![s("alpha"), s("beta"), s("gamma")];
+        let candidates = vec![cand("alpha", None), cand("beta", None), cand("gamma", None)];
         let filtered = vec![0, 1, 2];
         let marked = HashSet::new();
         assert_eq!(
@@ -367,7 +430,12 @@ mod tests {
 
     #[test]
     fn selection_copies_marked_in_filtered_order() {
-        let candidates = vec![s("alpha"), s("beta"), s("gamma"), s("delta")];
+        let candidates = vec![
+            cand("alpha", None),
+            cand("beta", None),
+            cand("gamma", None),
+            cand("delta", None),
+        ];
         // Reverse the filtered order so gamma (idx 2) comes before alpha (idx 0).
         let filtered = vec![2, 0, 3, 1];
         let marked = HashSet::from([0, 2]);
@@ -379,12 +447,51 @@ mod tests {
 
     #[test]
     fn selection_uses_newline_separator_in_lines_mode() {
-        let candidates = vec![s("first line"), s("second line")];
+        let candidates = vec![cand("first line", None), cand("second line", None)];
         let filtered = vec![0, 1];
         let marked = HashSet::from([0, 1]);
         assert_eq!(
             join_selection(&candidates, &filtered, 0, &marked, Mode::Lines).as_deref(),
             Some("first line\nsecond line")
+        );
+    }
+
+    #[test]
+    fn markdown_copy_uses_markdown_when_available() {
+        let candidates = vec![
+            cand("see Patty", Some("see [Patty](https://e/p)")),
+            cand("plain", None),
+        ];
+        let filtered = vec![0, 1];
+        let marked = HashSet::new();
+        assert_eq!(
+            join_selection_markdown(&candidates, &filtered, 0, &marked).as_deref(),
+            Some("see [Patty](https://e/p)")
+        );
+    }
+
+    #[test]
+    fn markdown_copy_falls_back_to_plain_for_words() {
+        let candidates = vec![cand("alpha", None), cand("beta", None)];
+        let filtered = vec![0, 1];
+        let marked = HashSet::new();
+        assert_eq!(
+            join_selection_markdown(&candidates, &filtered, 1, &marked).as_deref(),
+            Some("beta")
+        );
+    }
+
+    #[test]
+    fn markdown_copy_joins_marked_with_newline() {
+        let candidates = vec![
+            cand("see Patty", Some("see [Patty](https://e/p)")),
+            cand("see Hamburger", Some("see [Hamburger](https://e/h)")),
+        ];
+        let filtered = vec![0, 1];
+        let marked = HashSet::from([0, 1]);
+        assert_eq!(
+            join_selection_markdown(&candidates, &filtered, 0, &marked).as_deref(),
+            Some("see [Patty](https://e/p)\nsee [Hamburger](https://e/h)")
         );
     }
 

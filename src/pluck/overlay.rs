@@ -31,6 +31,9 @@ pub struct PluckRow {
     pub selected: bool,
     /// Toggled with `Tab` for multi-copy.
     pub marked: bool,
+    /// The candidate has a markdown rendering (links). Shown as a small `md`
+    /// marker at the row's right edge so `ctrl-m` is discoverable.
+    pub md: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -209,21 +212,29 @@ impl PluckOverlayView {
 
         // Rows.
         let text_x = panel_x + PADDING + MARK_WIDTH;
-        let text_max_width = panel_x + panel_width - PADDING - text_x;
+        let text_max_width = panel_x + panel_width - PADDING - text_x - MARK_WIDTH;
         for (i, row) in state.rows.iter().enumerate() {
             let row_y = sep_y + 8.0 + i as f64 * ROW_HEIGHT;
-            draw_row(row, panel_x, row_y, text_x, text_max_width, &style);
+            draw_row(
+                row,
+                panel_x,
+                panel_width,
+                row_y,
+                text_x,
+                text_max_width,
+                &style,
+            );
         }
 
         // Footer cheatsheet.
         let footer_y = sep_y + 8.0 + row_count as f64 * ROW_HEIGHT + 6.0;
         let footer = if state.marked_count > 0 {
             format!(
-                "enter=copy({})  tab=mark  ctrl-f=mode  esc=cancel",
+                "enter=copy({})  ctrl-m=markdown  tab=mark  ctrl-f=mode  esc=cancel",
                 state.marked_count
             )
         } else {
-            "enter=copy  tab=mark  ctrl-f=mode  esc=cancel".to_string()
+            "enter=copy  ctrl-m=markdown  tab=mark  ctrl-f=mode  esc=cancel".to_string()
         };
         let footer_ns = NSString::from_str(&footer);
         unsafe {
@@ -245,6 +256,7 @@ struct RowStyle {
 fn draw_row(
     row: &PluckRow,
     panel_x: f64,
+    panel_width: f64,
     row_y: f64,
     text_x: f64,
     text_max_width: f64,
@@ -258,7 +270,7 @@ fn draw_row(
     if let Some(bg) = bg {
         let row_rect = NSRect::new(
             NSPoint::new(panel_x + 4.0, row_y - 2.0),
-            NSSize::new(PANEL_WIDTH - 8.0, ROW_HEIGHT - 2.0),
+            NSSize::new(panel_width - 8.0, ROW_HEIGHT - 2.0),
         );
         unsafe {
             let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(row_rect, 5.0, 5.0);
@@ -306,6 +318,25 @@ fn draw_row(
         unsafe { s.drawAtPoint_withAttributes(NSPoint::new(x, baseline_y), Some(attrs)) };
         x += style.advance;
         emitted += style.advance;
+    }
+
+    // Markdown indicator at the row's right edge: shown when the candidate has
+    // a markdown rendering (i.e. it's a reconstructed line containing links),
+    // so `ctrl-m` is discoverable.
+    if row.md {
+        let md_color = unsafe { NSColor::colorWithSRGBRed_green_blue_alpha(0.55, 0.75, 0.95, 0.9) };
+        let keys = [unsafe { NSFontAttributeName }, unsafe {
+            NSForegroundColorAttributeName
+        }];
+        let md_attrs =
+            NSDictionary::from_vec(&keys, vec![to_any(style.font.clone()), to_any(md_color)]);
+        let label = NSString::from_str("md");
+        let size = unsafe { label.sizeWithAttributes(Some(&md_attrs)) };
+        let origin = NSPoint::new(
+            panel_x + panel_width - PADDING - size.width,
+            row_y + (ROW_HEIGHT - FONT_SIZE) / 2.0 - 1.0,
+        );
+        unsafe { label.drawAtPoint_withAttributes(origin, Some(&md_attrs)) };
     }
 }
 
