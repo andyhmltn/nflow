@@ -14,7 +14,7 @@
 //! the system posts when you click the menu entry.
 
 mod collect;
-mod fuzzy;
+pub mod fuzzy;
 mod overlay;
 
 use std::sync::atomic::{AtomicBool, Ordering};

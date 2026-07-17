@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::Mutex;
 
 use crate::config::HotkeyConfig;
-use crate::types::{NflowError, Command, Result};
+use crate::types::{Command, NflowError, Result};
 
 pub const OPTION_KEY: u32 = 0x0800;
 pub const SHIFT_KEY: u32 = 0x0200;
@@ -214,6 +214,7 @@ pub fn build_bindings(config: &HotkeyConfig) -> Result<Vec<HotkeyBinding>> {
         (&config.text_select, Command::TextSelect),
         (&config.scroll_mode, Command::ScrollMode),
         (&config.menu_search, Command::MenuSearch),
+        (&config.pluck, Command::Pluck),
     ];
     for (maybe_pattern, command) in optional {
         if let Some(pattern) = maybe_pattern {
@@ -356,6 +357,10 @@ pub fn run_mode_command(cmd: &Command) -> bool {
         crate::menusearch::toggle();
         return true;
     }
+    if *cmd == Command::Pluck {
+        crate::pluck::toggle(crate::screen::get_full_screen_rect());
+        return true;
+    }
     false
 }
 
@@ -423,6 +428,18 @@ unsafe extern "C" fn event_tap_callback(
 
         if crate::menusearch::is_active() {
             crate::menusearch::handle_key(
+                keycode,
+                typed_char(event),
+                modifiers,
+                keycode == ESC_KEYCODE,
+                keycode == DELETE_KEYCODE,
+                keycode == RETURN_KEYCODE,
+            );
+            return std::ptr::null_mut();
+        }
+
+        if crate::pluck::is_active() {
+            crate::pluck::handle_key(
                 keycode,
                 typed_char(event),
                 modifiers,
@@ -749,9 +766,10 @@ mod tests {
             text_select: Some("cmd-shift-y".to_string()),
             scroll_mode: Some("cmd-shift-i".to_string()),
             menu_search: Some("alt-cmd-shift-p".to_string()),
+            pluck: Some("alt-cmd-shift-o".to_string()),
         };
         let bindings = build_bindings(&config).unwrap();
-        assert_eq!(bindings.len(), 16);
+        assert_eq!(bindings.len(), 17);
 
         let scenes = bindings
             .iter()

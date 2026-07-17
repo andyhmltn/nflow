@@ -4,12 +4,13 @@ A tiling window manager and keyboard accessibility toolkit for macOS.
 
 nflow pins each app to a virtual space and tiles its windows into columns, all driven from a single TOML file that reloads automatically. No manual window-management hotkeys: switching apps switches spaces, and the layout comes entirely from config.
 
-On top of that, nflow adds three keyboard-driven accessibility tools that let you use macOS without touching the mouse:
+On top of that, nflow adds five keyboard-driven accessibility tools that let you use macOS without touching the mouse:
 
 - **Hint-mode.** Label every clickable element on screen with a keyboard shortcut, then click, right-click, or copy links without touching the trackpad.
 - **Text-select.** Search for text on screen, anchor a selection, then extend it with Vim motions (h/j/k/l, w/e/b, f/t, and more). Press y to copy.
 - **Scroll-mode.** Label every scroll area in the focused window, then scroll with Vim keys (j/k, c-d/c-u, gg/G). Works everywhere synthetic mouse-wheel events reach.
 - **Menu-search.** A fuzzy command palette over the frontmost app's menu bar. Search every menu item by name, or type its hint code to fire it instantly.
+- **Pluck.** A fuzzy finder over all the visible text on screen. Tokenise every text element into words or lines, filter fuzzy, and copy any token to the clipboard.
 
 > Status: early. Built for the author's own daily driving. Expect rough edges.
 
@@ -21,7 +22,7 @@ macOS has good apps and bad window management. Tools like AeroSpace and yabai al
 - **Declarative, not interactive.** The layout is whatever the config says. You change it by editing the config, never by poking windows with hotkeys.
 - **Profiles by screen width.** A laptop layout and an ultrawide layout, picked automatically when the screen changes.
 - **One file, hot reloaded.** Edit `~/.config/nflow/config.toml` and the running daemon picks it up.
-- **Keyboard reach.** Hint-mode, text-select, scroll-mode, and menu-search drive the pointer, clipboard, scrolling, and menu bar from the keyboard. The goal is to make macOS usable with only a keyboard -- clicking buttons, copying text, scrolling windows, and firing menu commands without a mouse or trackpad.
+- **Keyboard reach.** Hint-mode, text-select, scroll-mode, menu-search, and pluck drive the pointer, clipboard, scrolling, menu bar, and on-screen text from the keyboard. The goal is to make macOS usable with only a keyboard -- clicking buttons, copying text, scrolling windows, firing menu commands, and lifting any visible string off the screen without a mouse or trackpad.
 - **Tiny.** A few thousand lines of Rust over the Accessibility API. Easy to read, easy to change.
 
 ## Requirements
@@ -48,7 +49,7 @@ RUST_LOG=info ./target/release/nflow
 
 ## Accessibility tools
 
-Three of nflow's five hotkey actions are keyboard accessibility tools. They work through the macOS Accessibility API to drive the pointer, clipboard, and scroll wheel from the keyboard.
+Most of nflow's hotkey actions are keyboard accessibility tools. They work through the macOS Accessibility API to drive the pointer, clipboard, scroll wheel, and on-screen text from the keyboard.
 
 ### Hint-mode: click anything by label
 
@@ -92,6 +93,16 @@ Scrolling is driven by synthetic mouse-wheel events at the area's center, so it 
 
 Selecting an item performs `AXPress` on its `AXMenuItem` -- the same action macOS posts when you click the entry -- so it works in native, web, and Electron apps that expose a real menu bar. Vim-style navigation (`ctrl-j`/`ctrl-k`) keeps your hands on the home row; the hint codes let you skip the search entirely once you've learned a command's code.
 
+### Pluck: fuzzy-find any text on screen
+
+`pluck` (`alt-cmd-shift-o`) is a fuzzy finder over all the visible text on screen. Trigger it and nflow collects every text element the accessibility tree exposes across all on-screen windows, tokenises it into words (or lines), and renders a centered palette:
+
+1. Type a query and the list fuzzy-filters live, with matched characters highlighted. Navigate with `ctrl-j`/`ctrl-k` (also arrow keys and `ctrl-n`/`ctrl-p`).
+2. `Enter` copies the highlighted token to the clipboard and exits. `Tab` toggles a mark on the highlighted row for multi-copy; `Enter` then copies every marked token (words joined with a space, lines with a newline).
+3. `ctrl-f` cycles the tokenisation mode between **words** and **lines**, keeping the current query. `Backspace` edits the query. `Esc` exits without copying.
+
+It is the screen-wide analogue of a terminal fuzzy-finder: where that fuzzes a pane backlog, pluck fuzzes the whole display. Words are trimmed of surrounding brackets and quotes and must be at least five characters, which keeps the palette to meaningful tokens. Pluck reuses text-select's text collector and menu-search's fuzzy matcher, so it sees exactly what the accessibility tree sees and ranks the same way.
+
 ## Configuration
 
 Config lives at `~/.config/nflow/config.toml`. Example:
@@ -104,6 +115,7 @@ hint-mode-copy-link   = "cmd-shift-l"
 text-select           = "cmd-shift-y"
 scroll-mode           = "cmd-shift-i"
 menu-search           = "alt-cmd-shift-p"
+pluck                 = "alt-cmd-shift-o"
 apply-scene           = "alt-ctrl-{n}"
 
 terminal = "Ghostty"
@@ -203,6 +215,7 @@ Modifiers: `alt`/`option`, `shift`, `ctrl`/`control`, `cmd`/`command`. Patterns:
 | text-select           | `cmd-shift-y`         | Vim-style select-and-copy of visible text (Esc cancels) |
 | scroll-mode           | `cmd-shift-i`         | Label every scroll area in the focused window; type the label, then scroll it with Vim keys (Esc cancels) |
 | menu-search           | `alt-cmd-shift-p`     | Fuzzy command palette over the frontmost app's menu bar; search or type a hint code to fire a menu item (Esc cancels) |
+| pluck                 | `alt-cmd-shift-o`     | Fuzzy-find any visible text on screen; copy the highlighted token (or marked tokens) to the clipboard (Esc cancels) |
 | apply-scene           | `alt-ctrl-1` ...      | Switch the active profile to scene N (`alt-ctrl-0` restores the default) |
 
 ### Gaps
@@ -244,6 +257,7 @@ src/
   textselect/   vim-style keyboard text selection
   scroll/       scroll-mode: label and scroll scroll areas with Vim keys
   menusearch/   menu-search: fuzzy command palette over the menu bar
+  pluck/        pluck: fuzzy finder over all visible on-screen text
   types.rs      core types and errors
 docs/
   LESSONS.md      macOS quirks worth knowing before hacking
@@ -252,6 +266,7 @@ docs/
   text-select.md  Vim-style text selection via the accessibility tree
   scroll-mode.md  Keyboard scroll areas
   menu-search.md  Fuzzy command palette over the menu bar
+  pluck.md        Fuzzy finder over all visible on-screen text
 ```
 
 ## Development

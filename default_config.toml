@@ -5,6 +5,7 @@ hint-mode-copy-link = "cmd-shift-l"
 text-select = "cmd-shift-y"
 scroll-mode = "cmd-shift-i"
 menu-search = "alt-cmd-shift-p"
+pluck = "alt-cmd-shift-o"
 apply-scene = "alt-ctrl-{n}"
 
 terminal = "Ghostty"

@@ -21,6 +21,8 @@ pub struct HotkeyConfig {
     pub scroll_mode: Option<String>,
     #[serde(rename = "menu-search", default)]
     pub menu_search: Option<String>,
+    #[serde(rename = "pluck", default)]
+    pub pluck: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]

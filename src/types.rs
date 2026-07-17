@@ -99,6 +99,7 @@ pub enum Command {
     TextSelect,
     ScrollMode,
     MenuSearch,
+    Pluck,
 }
 
 #[derive(Debug)]
@@ -111,7 +112,7 @@ pub enum NflowError {
     ScreenDetection(String),
 }
 
-impl fmt::Display for nflowError {
+impl fmt::Display for NflowError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::AccessibilityNotEnabled => {

@@ -234,7 +234,8 @@ fn tick(app: &Rc<RefCell<App>>) {
             | Command::HintModeCopyLink
             | Command::TextSelect
             | Command::ScrollMode
-            | Command::MenuSearch => {
+            | Command::MenuSearch
+            | Command::Pluck => {
                 nflow::hotkey::run_mode_command(&cmd);
             }
             _ => {}
@@ -414,6 +415,7 @@ fn accessibility_shortcuts(hotkeys: &HotkeyConfig) -> Vec<statusbar::MenuShortcu
         ("Text select", &hotkeys.text_select, Command::TextSelect),
         ("Scroll mode", &hotkeys.scroll_mode, Command::ScrollMode),
         ("Menu search", &hotkeys.menu_search, Command::MenuSearch),
+        ("Pluck", &hotkeys.pluck, Command::Pluck),
     ];
     entries
         .into_iter()

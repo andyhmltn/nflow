@@ -4,6 +4,7 @@ pub mod daemon;
 pub mod hint;
 pub mod hotkey;
 pub mod menusearch;
+pub mod pluck;
 pub mod screen;
 pub mod scroll;
 pub mod space;
