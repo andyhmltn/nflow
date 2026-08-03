@@ -6,13 +6,22 @@ pub mod labels;
 pub mod matcher;
 pub mod overlay;
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use matcher::MatchResult;
 use objc2_foundation::MainThreadMarker;
 
 use crate::types::Rect;
+
+extern "C" {
+    static _dispatch_main_q: std::ffi::c_void;
+    fn dispatch_async_f(
+        queue: *const std::ffi::c_void,
+        context: *mut std::ffi::c_void,
+        work: extern "C" fn(*mut std::ffi::c_void),
+    );
+}
 
 pub struct HintTarget {
     pub frame: Rect,
@@ -33,6 +42,7 @@ pub enum HintAction {
 
 static HINT_ACTIVE: AtomicBool = AtomicBool::new(false);
 static SESSION: Mutex<Option<Session>> = Mutex::new(None);
+static GENERATION: AtomicUsize = AtomicUsize::new(0);
 
 struct Session {
     labels: Vec<String>,
@@ -40,6 +50,10 @@ struct Session {
     typed: String,
     overlay: overlay::Overlay,
     action: HintAction,
+    allocator: labels::LabelAllocator,
+    screen_height: f64,
+    generation: usize,
+    cancelled: Arc<AtomicBool>,
 }
 
 unsafe impl Send for Session {}
@@ -53,24 +67,83 @@ pub fn toggle(screen: Rect, action: HintAction) {
     if is_active() {
         return;
     }
-    let targets = match action {
-        HintAction::Click(_) => collect::collect_targets(screen),
-        HintAction::CopyLink => collect::collect_link_targets(screen),
-    };
-    if targets.is_empty() {
-        return;
-    }
-    let labels = labels::generate(targets.len());
-    let badges = build_badges(&labels, &targets, screen.height);
-    let overlay = overlay::Overlay::show(badges);
+    let generation = GENERATION.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let overlay = overlay::Overlay::show(Vec::new());
     *SESSION.lock().unwrap_or_else(|e| e.into_inner()) = Some(Session {
-        labels,
-        targets,
+        labels: Vec::new(),
+        targets: Vec::new(),
         typed: String::new(),
         overlay,
         action,
+        allocator: labels::LabelAllocator::new(),
+        screen_height: screen.height,
+        generation,
+        cancelled: cancelled.clone(),
     });
     HINT_ACTIVE.store(true, Ordering::SeqCst);
+    let link_only = matches!(action, HintAction::CopyLink);
+    collect::stream_targets(
+        screen,
+        link_only,
+        cancelled,
+        Box::new(move |batch, done| dispatch_batch(generation, batch, done)),
+    );
+}
+
+struct BatchDelivery {
+    generation: usize,
+    batch: Vec<HintTarget>,
+    done: bool,
+}
+
+fn dispatch_batch(generation: usize, batch: Vec<HintTarget>, done: bool) {
+    let context = Box::into_raw(Box::new(BatchDelivery {
+        generation,
+        batch,
+        done,
+    }));
+    unsafe {
+        dispatch_async_f(
+            &_dispatch_main_q as *const _,
+            context as *mut std::ffi::c_void,
+            deliver_batch_main,
+        );
+    }
+}
+
+extern "C" fn deliver_batch_main(context: *mut std::ffi::c_void) {
+    let delivery = unsafe { Box::from_raw(context as *mut BatchDelivery) };
+    deliver_batch(*delivery);
+}
+
+fn deliver_batch(delivery: BatchDelivery) {
+    let _ = MainThreadMarker::new().expect("hint batches must be delivered on the main thread");
+    let mut guard = SESSION.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(session) = guard.as_mut() else {
+        return;
+    };
+    if session.generation != delivery.generation {
+        return;
+    }
+    if !delivery.batch.is_empty() {
+        let mut badges = Vec::with_capacity(delivery.batch.len());
+        for target in delivery.batch {
+            let label = session.allocator.allocate();
+            badges.push(overlay::HintBadge {
+                label: label.clone(),
+                x: target.frame.x,
+                y: geometry::flip_y(target.frame.y, target.frame.height, session.screen_height),
+            });
+            session.labels.push(label);
+            session.targets.push(target);
+        }
+        session.overlay.append_badges(badges);
+    }
+    if delivery.done && session.targets.is_empty() {
+        drop(guard);
+        end_session();
+    }
 }
 
 pub fn handle_key(keycode: u32, is_escape: bool, is_backspace: bool) {
@@ -125,29 +198,10 @@ pub fn handle_key(keycode: u32, is_escape: bool, is_backspace: bool) {
 
 fn end_session() {
     let _ = MainThreadMarker::new().expect("hint mode must run on the main thread");
-    let overlay = SESSION
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .take()
-        .map(|s| s.overlay);
+    let session = SESSION.lock().unwrap_or_else(|e| e.into_inner()).take();
     HINT_ACTIVE.store(false, Ordering::SeqCst);
-    if let Some(mut o) = overlay {
-        o.close();
+    if let Some(mut s) = session {
+        s.cancelled.store(true, Ordering::SeqCst);
+        s.overlay.close();
     }
-}
-
-fn build_badges(
-    labels: &[String],
-    targets: &[HintTarget],
-    screen_height: f64,
-) -> Vec<overlay::HintBadge> {
-    labels
-        .iter()
-        .zip(targets.iter())
-        .map(|(label, target)| overlay::HintBadge {
-            label: label.clone(),
-            x: target.frame.x,
-            y: geometry::flip_y(target.frame.y, target.frame.height, screen_height),
-        })
-        .collect()
 }

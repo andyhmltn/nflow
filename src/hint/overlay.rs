@@ -99,6 +99,10 @@ impl OverlayView {
         state.typed = String::new();
     }
 
+    fn append_badges(&self, badges: Vec<HintBadge>) {
+        self.ivars().state.borrow_mut().badges.extend(badges);
+    }
+
     fn set_highlights(&self, highlights: Vec<HighlightRect>) {
         self.ivars().state.borrow_mut().highlights = highlights;
     }
@@ -272,6 +276,11 @@ impl Overlay {
 
     pub fn set_badges(&self, badges: Vec<HintBadge>) {
         self.view.set_badges(badges);
+        unsafe { self.view.setNeedsDisplay(true) };
+    }
+
+    pub fn append_badges(&self, badges: Vec<HintBadge>) {
+        self.view.append_badges(badges);
         unsafe { self.view.setNeedsDisplay(true) };
     }
 

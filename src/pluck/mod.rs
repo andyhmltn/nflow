@@ -222,7 +222,8 @@ fn recompute(session: &mut Session) {
     }
     let mut scored: Vec<(i64, usize)> = Vec::new();
     for (idx, candidate) in session.candidates.iter().enumerate() {
-        let Some(m) = crate::menusearch::fuzzy::match_query(&session.query, &candidate.display) else {
+        let Some(m) = crate::menusearch::fuzzy::match_query(&session.query, &candidate.display)
+        else {
             continue;
         };
         scored.push((m.score, idx));

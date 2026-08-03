@@ -208,7 +208,15 @@ impl MenuOverlayView {
 
         for (i, row) in state.rows.iter().enumerate() {
             let row_y = sep_y + 8.0 + i as f64 * ROW_HEIGHT;
-            draw_row(row, panel_x, panel_width, row_y, text_x, text_max_width, &style);
+            draw_row(
+                row,
+                panel_x,
+                panel_width,
+                row_y,
+                text_x,
+                text_max_width,
+                &style,
+            );
         }
     }
 }

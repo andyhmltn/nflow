@@ -106,14 +106,42 @@ pub fn collect_pieces(screen: Rect) -> Vec<Piece> {
         } else {
             None
         };
-        out.push(Piece {
-            text,
-            frame: target.frame,
-            window_id: element.window_id(),
-            url,
-        });
+        split_multiline_piece(
+            Piece {
+                text,
+                frame: target.frame,
+                window_id: element.window_id(),
+                url,
+            },
+            &mut out,
+        );
     }
     out
+}
+
+fn split_multiline_piece(piece: Piece, out: &mut Vec<Piece>) {
+    let rows: Vec<&str> = piece.text.lines().collect();
+    if rows.len() < 2 {
+        out.push(piece);
+        return;
+    }
+    let row_height = piece.frame.height / rows.len() as f64;
+    for (i, row) in rows.into_iter().enumerate() {
+        if row.trim().is_empty() {
+            continue;
+        }
+        out.push(Piece {
+            text: row.to_string(),
+            frame: Rect {
+                x: piece.frame.x,
+                y: piece.frame.y + row_height * i as f64,
+                width: piece.frame.width,
+                height: row_height,
+            },
+            window_id: piece.window_id,
+            url: piece.url.clone(),
+        });
+    }
 }
 
 fn element_text(element: &AxElement) -> String {
@@ -450,6 +478,71 @@ mod tests {
         assert_eq!(trim_token("key:"), "key");
         assert_eq!(trim_token("[bracketed]"), "bracketed");
         assert_eq!(trim_token("'quoted'"), "quoted");
+    }
+
+    #[test]
+    fn multiline_piece_splits_into_rows_with_divided_frames() {
+        let mut out = Vec::new();
+        split_multiline_piece(
+            piece(
+                "first row\nsecond row\nthird row",
+                10.0,
+                100.0,
+                200.0,
+                60.0,
+                None,
+            ),
+            &mut out,
+        );
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0].text, "first row");
+        assert_eq!(out[0].frame.y, 100.0);
+        assert_eq!(out[0].frame.height, 20.0);
+        assert_eq!(out[1].frame.y, 120.0);
+        assert_eq!(out[2].frame.y, 140.0);
+    }
+
+    #[test]
+    fn multiline_piece_skips_blank_rows() {
+        let mut out = Vec::new();
+        split_multiline_piece(
+            piece("first\n\nsecond", 10.0, 100.0, 200.0, 60.0, None),
+            &mut out,
+        );
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].text, "first");
+        assert_eq!(out[1].text, "second");
+    }
+
+    #[test]
+    fn single_line_piece_passes_through_unchanged() {
+        let mut out = Vec::new();
+        split_multiline_piece(piece("only row", 10.0, 100.0, 200.0, 20.0, None), &mut out);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].frame.height, 20.0);
+    }
+
+    #[test]
+    fn split_rows_do_not_squish_with_adjacent_single_line_pieces() {
+        let mut pieces = Vec::new();
+        split_multiline_piece(
+            piece(
+                "alpha row\nbeta row\ngamma row",
+                10.0,
+                100.0,
+                200.0,
+                60.0,
+                None,
+            ),
+            &mut pieces,
+        );
+        pieces.push(piece("beside beta", 212.0, 120.0, 100.0, 20.0, None));
+        let lines = reconstruct_lines(pieces);
+        let plains: Vec<&str> = lines.iter().map(|l| l.plain.as_str()).collect();
+        assert_eq!(
+            plains,
+            vec!["alpha row", "beta row beside beta", "gamma row"]
+        );
     }
 
     #[test]

@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use core_foundation::base::{CFTypeRef, TCFType};
@@ -737,10 +739,51 @@ fn is_scroll_target(element: AXUIElementRef) -> bool {
     has_scroll_class(&ax_get_class_list(element))
 }
 
+pub type StreamSink = Box<dyn FnMut(Vec<HintTarget>, bool) + Send>;
+
+const STREAM_BATCH: usize = 16;
+const STREAM_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
+
+struct Stream {
+    sink: StreamSink,
+    screen: Rect,
+    seen: HashSet<(i64, i64)>,
+    pending: Vec<HintTarget>,
+    last_flush: Instant,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl Stream {
+    fn push(&mut self, target: HintTarget) {
+        if !is_usable(target.frame, self.screen) {
+            return;
+        }
+        let (cx, cy) = crate::hint::geometry::center(target.frame);
+        if !self.seen.insert((cx.round() as i64, cy.round() as i64)) {
+            return;
+        }
+        self.pending.push(target);
+        if self.pending.len() >= STREAM_BATCH || self.last_flush.elapsed() >= STREAM_FLUSH_INTERVAL
+        {
+            self.flush(false);
+        }
+    }
+
+    fn flush(&mut self, done: bool) {
+        if self.pending.is_empty() && !done {
+            return;
+        }
+        (self.sink)(std::mem::take(&mut self.pending), done);
+        self.last_flush = Instant::now();
+    }
+}
+
 struct Walker {
     is_target: fn(AXUIElementRef) -> bool,
     capture: bool,
     out: Vec<HintTarget>,
+    total: usize,
+    stream: Option<Stream>,
 }
 
 impl Walker {
@@ -749,11 +792,18 @@ impl Walker {
             is_target,
             capture,
             out: Vec::new(),
+            total: 0,
+            stream: None,
         }
     }
 
     fn done(&self, deadline: Instant) -> bool {
-        self.out.len() >= MAX_TARGETS || Instant::now() >= deadline
+        if let Some(stream) = &self.stream {
+            if stream.cancelled.load(Ordering::SeqCst) {
+                return true;
+            }
+        }
+        self.total >= MAX_TARGETS || Instant::now() >= deadline
     }
 
     fn push_if_target(&mut self, element: AXUIElementRef) {
@@ -768,10 +818,23 @@ impl Walker {
         } else {
             None
         };
-        self.out.push(HintTarget {
+        let target = HintTarget {
             frame,
             element: captured,
-        });
+        };
+        self.total += 1;
+        match &mut self.stream {
+            Some(stream) => stream.push(target),
+            None => self.out.push(target),
+        }
+    }
+
+    fn maybe_flush(&mut self) {
+        if let Some(stream) = &mut self.stream {
+            if !stream.pending.is_empty() && stream.last_flush.elapsed() >= STREAM_FLUSH_INTERVAL {
+                stream.flush(false);
+            }
+        }
     }
 
     fn recurse(&mut self, element: AXUIElementRef, depth: u32, deadline: Instant) {
@@ -780,6 +843,7 @@ impl Walker {
         }
 
         self.push_if_target(element);
+        self.maybe_flush();
 
         let attr = make_cf_string("AXChildren");
         if attr.is_null() {
@@ -1035,25 +1099,42 @@ fn finish(walker: Walker, screen: Rect, start: Instant, kind: &str) -> Vec<HintT
     result
 }
 
-pub fn collect_targets(screen: Rect) -> Vec<HintTarget> {
-    let start = Instant::now();
-    let front = frontmost_pid();
-
-    let mut walker = Walker::new(is_clickable, false);
-    walker.collect_menu_bars(Instant::now() + MENU_BUDGET, front);
-    walker.walk_windows(front);
-
-    finish(walker, screen, start, "clickable")
-}
-
-pub fn collect_link_targets(screen: Rect) -> Vec<HintTarget> {
-    let start = Instant::now();
-    let front = frontmost_pid();
-
-    let mut walker = Walker::new(is_link, true);
-    walker.walk_windows(front);
-
-    finish(walker, screen, start, "link")
+pub fn stream_targets(screen: Rect, link_only: bool, cancelled: Arc<AtomicBool>, sink: StreamSink) {
+    std::thread::spawn(move || {
+        let start = Instant::now();
+        let front = frontmost_pid();
+        let (is_target, capture): (fn(AXUIElementRef) -> bool, bool) = if link_only {
+            (is_link, true)
+        } else {
+            (is_clickable, false)
+        };
+        let mut walker = Walker {
+            is_target,
+            capture,
+            out: Vec::new(),
+            total: 0,
+            stream: Some(Stream {
+                sink,
+                screen,
+                seen: HashSet::new(),
+                pending: Vec::new(),
+                last_flush: Instant::now(),
+                cancelled,
+            }),
+        };
+        if !link_only {
+            walker.collect_menu_bars(Instant::now() + MENU_BUDGET, front);
+        }
+        walker.walk_windows(front);
+        let total = walker.total;
+        if let Some(stream) = &mut walker.stream {
+            stream.flush(true);
+        }
+        log::info!(
+            "hint: streamed {total} raw targets (elapsed={:?})",
+            start.elapsed()
+        );
+    });
 }
 
 pub fn collect_text_targets(screen: Rect) -> Vec<HintTarget> {
