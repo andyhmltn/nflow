@@ -23,6 +23,8 @@ pub struct HotkeyConfig {
     pub menu_search: Option<String>,
     #[serde(rename = "pluck", default)]
     pub pluck: Option<String>,
+    #[serde(rename = "warp", default)]
+    pub warp: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]

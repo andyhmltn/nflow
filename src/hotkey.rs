@@ -215,6 +215,7 @@ pub fn build_bindings(config: &HotkeyConfig) -> Result<Vec<HotkeyBinding>> {
         (&config.scroll_mode, Command::ScrollMode),
         (&config.menu_search, Command::MenuSearch),
         (&config.pluck, Command::Pluck),
+        (&config.warp, Command::Warp),
     ];
     for (maybe_pattern, command) in optional {
         if let Some(pattern) = maybe_pattern {
@@ -361,6 +362,10 @@ pub fn run_mode_command(cmd: &Command) -> bool {
         crate::pluck::toggle(crate::screen::get_full_screen_rect());
         return true;
     }
+    if *cmd == Command::Warp {
+        crate::warp::toggle(crate::screen::get_full_screen_rect());
+        return true;
+    }
     false
 }
 
@@ -443,6 +448,16 @@ unsafe extern "C" fn event_tap_callback(
                 keycode,
                 typed_char(event),
                 modifiers,
+                keycode == ESC_KEYCODE,
+                keycode == DELETE_KEYCODE,
+                keycode == RETURN_KEYCODE,
+            );
+            return std::ptr::null_mut();
+        }
+
+        if crate::warp::is_active() {
+            crate::warp::handle_key(
+                keycode,
                 keycode == ESC_KEYCODE,
                 keycode == DELETE_KEYCODE,
                 keycode == RETURN_KEYCODE,
@@ -767,9 +782,10 @@ mod tests {
             scroll_mode: Some("cmd-shift-i".to_string()),
             menu_search: Some("alt-cmd-shift-p".to_string()),
             pluck: Some("alt-cmd-shift-o".to_string()),
+            warp: Some("alt-cmd-shift-w".to_string()),
         };
         let bindings = build_bindings(&config).unwrap();
-        assert_eq!(bindings.len(), 17);
+        assert_eq!(bindings.len(), 18);
 
         let scenes = bindings
             .iter()

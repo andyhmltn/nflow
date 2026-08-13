@@ -13,4 +13,5 @@ pub mod textselect;
 pub mod tiling;
 pub mod toast;
 pub mod types;
+pub mod warp;
 pub mod watcher;

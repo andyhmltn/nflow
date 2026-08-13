@@ -100,6 +100,7 @@ pub enum Command {
     ScrollMode,
     MenuSearch,
     Pluck,
+    Warp,
 }
 
 #[derive(Debug)]
