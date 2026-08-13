@@ -11,7 +11,7 @@ use core_foundation_sys::runloop::{CFRunLoopTimerContext, CFRunLoopTimerRef};
 use objc2_app_kit::NSApplication;
 use objc2_foundation::MainThreadMarker;
 
-use nflow::ax::{frontmost_app, is_accessibility_enabled, MacOSBridge};
+use nflow::ax::{focused_window_for_pid, frontmost_app, is_accessibility_enabled, MacOSBridge};
 use nflow::config::{
     app_layout_lookup_with_scene, effective_gaps, hide_titles_with_scene, parse_config_file,
     parse_config_str, scene_list, select_profile, HotkeyConfig,
@@ -85,7 +85,7 @@ fn main() {
 }
 
 fn run_daemon() {
-    env_logger::init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     log::info!("nflow starting");
 
     if let Some(pid) = daemon::is_running() {
@@ -204,10 +204,16 @@ fn run_daemon() {
 fn frontmost_follow_target(
     last_pid: Option<i32>,
     frontmost_pid: i32,
+    focused_wid: Option<u32>,
     registry: &BTreeMap<u32, i32>,
 ) -> Option<u32> {
     if last_pid == Some(frontmost_pid) {
         return None;
+    }
+    if let Some(wid) = focused_wid {
+        if registry.get(&wid) == Some(&frontmost_pid) {
+            return Some(wid);
+        }
     }
     registry
         .iter()
@@ -262,7 +268,22 @@ fn tick(app: &Rc<RefCell<App>>) {
     let frontmost_pid = frontmost.as_ref().map(|(pid, _)| *pid);
 
     for win in new_windows {
+        let helper_of_frontmost = frontmost_pid
+            .is_some_and(|fp| fp != win.pid && app.bridge_registry.values().any(|&p| p == fp));
+
         app.bridge_registry.insert(win.window_id, win.pid);
+
+        if helper_of_frontmost {
+            log::info!(
+                "helper/popup window detected: app=\"{}\" wid={} pid={}, spawned by frontmost pid={:?}, leaving untiled",
+                win.app_name,
+                win.window_id,
+                win.pid,
+                frontmost_pid,
+            );
+            continue;
+        }
+
         app.space_manager
             .handle_window_created(win.window_id, &win.app_name, win.pid);
 
@@ -278,14 +299,20 @@ fn tick(app: &Rc<RefCell<App>>) {
     }
 
     if let Some((pid, name)) = frontmost {
-        if let Some(focused_wid) =
-            frontmost_follow_target(app.last_frontmost_pid, pid, &app.bridge_registry)
-        {
+        let ax_focused = focused_window_for_pid(pid);
+        if let Some(focused_wid) = frontmost_follow_target(
+            app.last_frontmost_pid,
+            pid,
+            ax_focused,
+            &app.bridge_registry,
+        ) {
             log::info!(
-                "frontmost changed: {:?} -> {} (pid {})",
+                "frontmost changed: {:?} -> {} (pid {}), ax_focused={:?}, follow={}",
                 app.last_frontmost_pid,
                 name,
-                pid
+                pid,
+                ax_focused,
+                focused_wid,
             );
             app.last_frontmost_pid = Some(pid);
             app.space_manager.handle_focus_changed(focused_wid);
@@ -474,19 +501,46 @@ mod tests {
     #[test]
     fn no_follow_when_frontmost_unchanged() {
         let registry = BTreeMap::from([(10u32, 5i32)]);
-        assert_eq!(frontmost_follow_target(Some(5), 5, &registry), None);
+        assert_eq!(frontmost_follow_target(Some(5), 5, None, &registry), None);
     }
 
     #[test]
     fn no_follow_when_window_not_registered_yet() {
         let registry = BTreeMap::new();
-        assert_eq!(frontmost_follow_target(None, 5, &registry), None);
+        assert_eq!(frontmost_follow_target(None, 5, None, &registry), None);
     }
 
     #[test]
     fn follows_registered_window_on_change() {
         let registry = BTreeMap::from([(10u32, 5i32)]);
-        assert_eq!(frontmost_follow_target(None, 5, &registry), Some(10));
+        assert_eq!(frontmost_follow_target(None, 5, None, &registry), Some(10));
+    }
+
+    #[test]
+    fn prefers_actually_focused_window_when_registered() {
+        let registry = BTreeMap::from([(10u32, 5i32), (11u32, 5i32)]);
+        assert_eq!(
+            frontmost_follow_target(None, 5, Some(11), &registry),
+            Some(11)
+        );
+    }
+
+    #[test]
+    fn falls_back_when_focused_window_not_registered() {
+        let registry = BTreeMap::from([(10u32, 5i32)]);
+        assert_eq!(
+            frontmost_follow_target(None, 5, Some(999), &registry),
+            Some(10)
+        );
+    }
+
+    #[test]
+    fn ignores_focused_window_belonging_to_other_pid() {
+        let registry = BTreeMap::from([(10u32, 5i32), (20u32, 7i32)]);
+        assert_eq!(
+            frontmost_follow_target(None, 5, Some(20), &registry),
+            Some(10)
+        );
     }
 
     #[test]
@@ -494,7 +548,7 @@ mod tests {
         let mut last_pid = None;
 
         let registry_before = BTreeMap::new();
-        let target = frontmost_follow_target(last_pid, 5, &registry_before);
+        let target = frontmost_follow_target(last_pid, 5, None, &registry_before);
         assert_eq!(target, None);
         if target.is_some() {
             last_pid = Some(5);
@@ -502,7 +556,7 @@ mod tests {
         assert_eq!(last_pid, None);
 
         let registry_after = BTreeMap::from([(10u32, 5i32)]);
-        let target = frontmost_follow_target(last_pid, 5, &registry_after);
+        let target = frontmost_follow_target(last_pid, 5, None, &registry_after);
         assert_eq!(target, Some(10));
     }
 }

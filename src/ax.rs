@@ -219,6 +219,113 @@ fn title_matches(title: &str, patterns: &[String]) -> bool {
     patterns.iter().any(|p| title.contains(p.as_str()))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum FocusedWindow {
+    Standard(WindowId),
+    NonStandard,
+    Unknown,
+}
+
+fn ax_get_focused_window(app_element: AXUIElementRef) -> FocusedWindow {
+    unsafe {
+        let attr = make_cf_string("AXFocusedWindow");
+        let mut value: CFTypeRef = std::ptr::null();
+        let err = AXUIElementCopyAttributeValue(app_element, attr, &mut value);
+        CFRelease(attr as CFTypeRef);
+        if err != 0 || value.is_null() {
+            return FocusedWindow::Unknown;
+        }
+        let elem = value as AXUIElementRef;
+        let subrole = ax_get_string_attribute(elem, "AXSubrole").unwrap_or_default();
+        let mut cg_id: u32 = 0;
+        let id_err = _AXUIElementGetWindow(elem, &mut cg_id);
+        CFRelease(value);
+        if !subrole.is_empty() && subrole != "AXStandardWindow" {
+            return FocusedWindow::NonStandard;
+        }
+        if id_err != 0 {
+            return FocusedWindow::Unknown;
+        }
+        FocusedWindow::Standard(cg_id)
+    }
+}
+
+fn ax_get_focused_window_id(app_element: AXUIElementRef) -> Option<WindowId> {
+    match ax_get_focused_window(app_element) {
+        FocusedWindow::Standard(wid) => Some(wid),
+        _ => None,
+    }
+}
+
+fn ax_focused_matches(app_element: AXUIElementRef, target: WindowId) -> bool {
+    match ax_get_focused_window(app_element) {
+        FocusedWindow::Standard(wid) => wid == target,
+        FocusedWindow::NonStandard => false,
+        FocusedWindow::Unknown => true,
+    }
+}
+
+pub fn focused_window_for_pid(pid: i32) -> Option<WindowId> {
+    unsafe {
+        let app_element = AXUIElementCreateApplication(pid);
+        if app_element.is_null() {
+            return None;
+        }
+        let result = ax_get_focused_window_id(app_element);
+        CFRelease(app_element as CFTypeRef);
+        result
+    }
+}
+
+fn app_has_extra_windows(app_element: AXUIElementRef, target_id: WindowId) -> bool {
+    unsafe {
+        let windows_attr = make_cf_string("AXWindows");
+        let mut windows_value: CFTypeRef = std::ptr::null();
+        let err = AXUIElementCopyAttributeValue(
+            app_element,
+            windows_attr,
+            &mut windows_value as *mut CFTypeRef,
+        );
+        CFRelease(windows_attr as CFTypeRef);
+
+        if err != 0 || windows_value.is_null() {
+            return false;
+        }
+
+        let windows_array = windows_value as core_foundation_sys::array::CFArrayRef;
+        let count = core_foundation_sys::array::CFArrayGetCount(windows_array);
+
+        let mut has_extra = false;
+        for i in 0..count {
+            let elem = core_foundation_sys::array::CFArrayGetValueAtIndex(windows_array, i)
+                as AXUIElementRef;
+            if elem.is_null() {
+                continue;
+            }
+
+            let subrole = ax_get_string_attribute(elem, "AXSubrole").unwrap_or_default();
+            if !subrole.is_empty() && subrole != "AXStandardWindow" {
+                has_extra = true;
+                break;
+            }
+
+            let mut cg_id: u32 = 0;
+            let id_err = _AXUIElementGetWindow(elem, &mut cg_id);
+            if id_err != 0 {
+                has_extra = true;
+                break;
+            }
+            if cg_id != target_id {
+                has_extra = true;
+                break;
+            }
+        }
+
+        CFRelease(windows_value);
+        has_extra
+    }
+}
+
 fn find_window_by_id(app_element: AXUIElementRef, target_id: WindowId) -> Option<AXUIElementRef> {
     unsafe {
         let windows_attr = make_cf_string("AXWindows");
@@ -405,6 +512,19 @@ impl WindowBridge for MacOSBridge {
             return Ok(());
         };
 
+        if app_has_extra_windows(app_element, window_id) {
+            log::info!(
+                "apply_frame: skipping wid={window_id}, app has extra AXWindows (popup present)"
+            );
+            return Ok(());
+        }
+        if !ax_focused_matches(app_element, window_id) {
+            log::info!(
+                "apply_frame: skipping wid={window_id}, non-target focused window (sheet/dialog)"
+            );
+            return Ok(());
+        }
+
         let window = match self.get_window_element(window_id) {
             Some(w) => w,
             None => {
@@ -436,6 +556,8 @@ impl WindowBridge for MacOSBridge {
             return Ok(());
         };
 
+        let focused = ax_get_focused_window(app_element);
+
         let windows_value = unsafe {
             let windows_attr = make_cf_string("AXWindows");
             let mut value: CFTypeRef = std::ptr::null();
@@ -466,7 +588,12 @@ impl WindowBridge for MacOSBridge {
                     frontmost_id = Some(cg_id);
                 }
                 let title = ax_get_string_attribute(elem, "AXTitle").unwrap_or_default();
-                windows.push((cg_id, elem, title_matches(&title, hide_titles)));
+                let subrole = ax_get_string_attribute(elem, "AXSubrole").unwrap_or_default();
+                let matched = title_matches(&title, hide_titles);
+                log::info!(
+                    "apply_frame_hiding: enum wid={cg_id} subrole={subrole:?} title={title:?} hide_match={matched}"
+                );
+                windows.push((cg_id, elem, matched));
             }
         }
 
@@ -478,20 +605,42 @@ impl WindowBridge for MacOSBridge {
 
         if let Some(primary_idx) = primary {
             let (primary_id, primary_elem, _) = windows[primary_idx];
-            self.apply_frame_to_window(app_element, primary_elem, primary_id, frame);
+            let focused_wid = match focused {
+                FocusedWindow::Standard(w) => Some(w),
+                _ => None,
+            };
+            let has_untracked_extra = windows
+                .iter()
+                .any(|&(id, _, hidden)| id != primary_id && !hidden);
+            let is_non_standard_focus = matches!(focused, FocusedWindow::NonStandard);
+            let hide_titled_focused = focused_wid.is_some_and(|f| {
+                windows
+                    .iter()
+                    .any(|&(id, _, hidden)| id == f && hidden && id != primary_id)
+            });
 
-            let mut covered_any = false;
-            for (i, &(id, elem, hidden)) in windows.iter().enumerate() {
-                if i == primary_idx || !hidden {
-                    continue;
+            if has_untracked_extra || is_non_standard_focus || hide_titled_focused {
+                log::info!(
+                    "apply_frame_hiding: skipping frame updates for wid={primary_id} \
+                     (untracked_extra={has_untracked_extra}, non_standard_focus={is_non_standard_focus}, \
+                     hide_titled_focused={hide_titled_focused})"
+                );
+            } else {
+                self.apply_frame_to_window(app_element, primary_elem, primary_id, frame);
+
+                let mut covered_any = false;
+                for (i, &(id, elem, hidden)) in windows.iter().enumerate() {
+                    if i == primary_idx || !hidden {
+                        continue;
+                    }
+                    self.apply_frame_to_window(app_element, elem, id, frame);
+                    covered_any = true;
                 }
-                self.apply_frame_to_window(app_element, elem, id, frame);
-                covered_any = true;
-            }
 
-            if covered_any && frontmost_id != Some(primary_id) {
-                let _ = ax_set_bool_attribute(primary_elem, "AXMain", true);
-                ax_perform_action(primary_elem, "AXRaise");
+                if covered_any && frontmost_id != Some(primary_id) {
+                    let _ = ax_set_bool_attribute(primary_elem, "AXMain", true);
+                    ax_perform_action(primary_elem, "AXRaise");
+                }
             }
         }
 
@@ -503,6 +652,15 @@ impl WindowBridge for MacOSBridge {
         log::info!("bridge.focus({window_id})");
         if let Some(&pid) = self.window_to_pid.get(&window_id) {
             activate_app(pid);
+        }
+
+        if let Some(&app_element) = self.app_elements.get(&window_id) {
+            if !ax_focused_matches(app_element, window_id) {
+                log::info!(
+                    "bridge.focus: preserving non-target focused window (target={window_id}), likely a popup"
+                );
+                return Ok(());
+            }
         }
 
         let window = match self.get_window_element(window_id) {
