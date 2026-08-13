@@ -14,6 +14,19 @@ terminal = "Ghostty"
 [ignore]
 apps = ["Raycast", "Spotlight", "Alfred", "1Password"]
 
+# App shortcuts: hotkey -> app name. Pressing the hotkey activates the app if it
+# is already running, or launches it otherwise. The hotkey format matches the
+# [hotkeys] section (modifiers joined by '-', e.g. "alt-cmd-ctrl-2").
+#
+# [app-shortcuts]
+# "cmd-4" = "Ghostty"
+# "alt-cmd-ctrl-2" = "Google Chrome"
+# "alt-cmd-ctrl-3" = "Slack"
+# "alt-cmd-ctrl-4" = "Google Chrome"
+# "alt-cmd-shift-5" = "Linear"
+# "alt-cmd-shift-6" = "Notion"
+# "alt-cmd-shift-7" = "DataGrip"
+
 [profile.default]
 screen-width-min = 0
 

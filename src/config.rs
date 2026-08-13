@@ -82,6 +82,9 @@ pub struct Config {
     pub terminal: Option<String>,
     #[serde(default)]
     pub ignore: IgnoreConfig,
+    #[serde(default)]
+    #[serde(rename = "app-shortcuts")]
+    pub app_shortcuts: BTreeMap<String, String>,
     pub profile: BTreeMap<String, Profile>,
 }
 
@@ -440,4 +443,32 @@ hide-windows = ["Calendar"]
         assert_eq!(lookup["Zen"], (1, 0, 1.0));
         assert_eq!(lookup["Slack"], (1, 1, 1.0));
     }
+
+    #[test]
+    fn parse_app_shortcuts() {
+        let toml = r#"
+[app-shortcuts]
+"cmd-4" = "Ghostty"
+"alt-cmd-ctrl-2" = "Google Chrome"
+"alt-cmd-shift-5" = "Linear"
+
+[profile.uw]
+screen-width-min = 3000
+
+[profile.uw.spaces.1]
+apps = ["Zen"]
+"#;
+        let config = parse_config_str(toml).unwrap();
+        assert_eq!(config.app_shortcuts["cmd-4"], "Ghostty");
+        assert_eq!(config.app_shortcuts["alt-cmd-ctrl-2"], "Google Chrome");
+        assert_eq!(config.app_shortcuts["alt-cmd-shift-5"], "Linear");
+    }
+
+    #[test]
+    fn app_shortcuts_default_to_empty() {
+        let config = parse_config_str(sample_toml()).unwrap();
+        assert!(config.app_shortcuts.is_empty());
+    }
 }
+
+

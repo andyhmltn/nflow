@@ -201,7 +201,20 @@ Bind `apply-scene = "alt-ctrl-{n}"` to switch scenes by number. Scene `0` (`alt-
 
 ### Hotkeys
 
-nflow has no manual window-management hotkeys: spaces switch automatically as you change the frontmost app (Cmd-Tab, Dock click, Spotlight), and the per-space layout comes entirely from config. All hotkeys are optional; omit one to leave it unbound.
+nflow has no manual window-management hotkeys: spaces switch automatically as you change the frontmost app (Cmd-Tab, Dock click, Spotlight), and the per-space layout comes entirely from config.
+
+### App shortcuts
+
+`[app-shortcuts]` maps a hotkey to an app name. Pressing the hotkey activates the app if it is already running, or launches it otherwise. The hotkey format matches the `[hotkeys]` section (modifiers joined by `-`, e.g. `"alt-cmd-ctrl-2"`).
+
+```toml
+[app-shortcuts]
+"cmd-4" = "Ghostty"
+"alt-cmd-ctrl-2" = "Google Chrome"
+"alt-cmd-shift-5" = "Linear"
+```
+
+This is useful for keyboard-driven app switching: configure your mechanical keyboard to send these hotkeys on a layer, and nflow handles the rest. The app shortcuts also appear in the status-bar menu under "Quick Launch", showing the key-equivalent for each. All hotkeys are optional; omit one to leave it unbound.
 
 Modifiers: `alt`/`option`, `shift`, `ctrl`/`control`, `cmd`/`command`. Patterns:
 

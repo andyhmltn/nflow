@@ -26,12 +26,17 @@ struct MenuState {
 
 static MENU_STATE: Mutex<Option<MenuState>> = Mutex::new(None);
 static SHORTCUTS: Mutex<Vec<MenuShortcutEntry>> = Mutex::new(Vec::new());
+static APP_SHORTCUTS: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MenuShortcutEntry {
     pub title: String,
     pub pattern: String,
     pub command: Command,
+}
+
+pub fn update_app_shortcuts(shortcuts: Vec<(String, String)>) {
+    *APP_SHORTCUTS.lock().unwrap() = shortcuts;
 }
 
 pub fn update_shortcuts(shortcuts: Vec<MenuShortcutEntry>) {
@@ -104,6 +109,22 @@ declare_class!(
             }
         }
 
+        #[method(runAppShortcut:)]
+        fn run_app_shortcut(&self, sender: &NSMenuItem) {
+            let tag = unsafe { sender.tag() };
+            if tag < 0 {
+                return;
+            }
+            let app = APP_SHORTCUTS
+                .lock()
+                .unwrap()
+                .get(tag as usize)
+                .map(|(name, _)| name.clone());
+            if let Some(name) = app {
+                let _ = self.ivars().tx.send(Command::ActivateApp(name));
+            }
+        }
+
         #[method(quit:)]
         fn quit(&self, _sender: &NSMenuItem) {
             let mtm = MainThreadMarker::from(self);
@@ -173,6 +194,52 @@ impl nflowStatusController {
             add_label(menu, mtm, "Accessibility");
             for (index, entry) in shortcuts.iter().enumerate() {
                 add_shortcut_item(menu, mtm, target, entry, index);
+            }
+        }
+
+        let app_shortcuts = APP_SHORTCUTS.lock().unwrap().clone();
+        if !app_shortcuts.is_empty() {
+            menu.addItem(&NSMenuItem::separatorItem(mtm));
+            add_label(menu, mtm, "Quick Launch");
+            for (index, (app_name, pattern)) in app_shortcuts.iter().enumerate() {
+                let (key, mask) = match crate::hotkey::menu_shortcut(pattern) {
+                    Some(shortcut) => {
+                        let key = if shortcut.key == "space" {
+                            " ".to_string()
+                        } else {
+                            shortcut.key.clone()
+                        };
+                        let mut mask = NSEventModifierFlags::empty();
+                        if shortcut.command {
+                            mask |= NSEventModifierFlags::NSEventModifierFlagCommand;
+                        }
+                        if shortcut.option {
+                            mask |= NSEventModifierFlags::NSEventModifierFlagOption;
+                        }
+                        if shortcut.control {
+                            mask |= NSEventModifierFlags::NSEventModifierFlagControl;
+                        }
+                        if shortcut.shift {
+                            mask |= NSEventModifierFlags::NSEventModifierFlagShift;
+                        }
+                        (key, mask)
+                    }
+                    None => (String::new(), NSEventModifierFlags::empty()),
+                };
+                let item = unsafe {
+                    NSMenuItem::initWithTitle_action_keyEquivalent(
+                        mtm.alloc(),
+                        &NSString::from_str(app_name),
+                        Some(sel!(runAppShortcut:)),
+                        &NSString::from_str(&key),
+                    )
+                };
+                unsafe {
+                    item.setKeyEquivalentModifierMask(mask);
+                    item.setTarget(Some(target));
+                    item.setTag(index as isize);
+                }
+                menu.addItem(&item);
             }
         }
 

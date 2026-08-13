@@ -2,22 +2,24 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::mpsc;
 use std::time::SystemTime;
 
+use core_foundation::base::TCFType;
 use core_foundation::date::CFAbsoluteTimeGetCurrent;
 use core_foundation::runloop::{kCFRunLoopDefaultMode, CFRunLoop, CFRunLoopTimer};
-use core_foundation_sys::runloop::{CFRunLoopTimerContext, CFRunLoopTimerRef};
+use core_foundation_sys::runloop::{CFRunLoopRef, CFRunLoopTimerContext, CFRunLoopTimerRef};
 use objc2_app_kit::NSApplication;
 use objc2_foundation::MainThreadMarker;
 
-use nflow::ax::{focused_window_for_pid, frontmost_app, is_accessibility_enabled, MacOSBridge};
+use nflow::ax::{activate_app_by_name, focused_window_for_pid, frontmost_app, is_accessibility_enabled, MacOSBridge};
 use nflow::config::{
     app_layout_lookup_with_scene, effective_gaps, hide_titles_with_scene, parse_config_file,
     parse_config_str, scene_list, select_profile, HotkeyConfig,
 };
 use nflow::daemon;
-use nflow::hotkey::{build_bindings, register_hotkeys, set_command_callback};
+use nflow::hotkey::{build_app_shortcut_bindings, build_bindings, register_hotkeys, set_command_callback};
 use nflow::screen::{
     check_screen_changed, get_screen_rect, get_screen_width, register_screen_change_callback,
 };
@@ -64,6 +66,25 @@ extern "C" fn timer_callback(_timer: CFRunLoopTimerRef, info: *mut std::ffi::c_v
     let app_ptr = info as *const Rc<RefCell<App>>;
     let app = unsafe { &*app_ptr };
     tick(app);
+}
+
+static TICK_TIMER: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
+static RUN_LOOP: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
+
+fn wake_tick() {
+    unsafe {
+        let timer = TICK_TIMER.load(Ordering::SeqCst);
+        if !timer.is_null() {
+            core_foundation_sys::runloop::CFRunLoopTimerSetNextFireDate(
+                timer as CFRunLoopTimerRef,
+                CFAbsoluteTimeGetCurrent(),
+            );
+        }
+        let rl = RUN_LOOP.load(Ordering::SeqCst);
+        if !rl.is_null() {
+            core_foundation_sys::runloop::CFRunLoopWakeUp(rl as CFRunLoopRef);
+        }
+    }
 }
 
 fn main() {
@@ -131,9 +152,15 @@ fn run_daemon() {
 
     let bindings = build_bindings(&config.hotkeys).expect("failed to build hotkey bindings");
     log::info!("built {} hotkey bindings", bindings.len());
+    let mut bindings = bindings;
+    bindings.extend(
+        build_app_shortcut_bindings(&config.app_shortcuts).expect("failed to build app shortcut bindings"),
+    );
+    log::info!("built {} app shortcut bindings", config.app_shortcuts.len());
     register_hotkeys(&bindings).expect("failed to register hotkeys");
     log::info!("hotkeys registered successfully");
     statusbar::update_shortcuts(accessibility_shortcuts(&config.hotkeys));
+    statusbar::update_app_shortcuts(config.app_shortcuts.clone().into_iter().collect());
 
     register_screen_change_callback().expect("failed to register screen change callback");
 
@@ -142,6 +169,7 @@ fn run_daemon() {
     let menu_tx = command_tx.clone();
     set_command_callback(move |cmd| {
         let _ = command_tx.send(cmd);
+        wake_tick();
     });
 
     let mut watcher = WindowWatcher::new(config.ignore.apps.clone());
@@ -191,6 +219,8 @@ fn run_daemon() {
     unsafe {
         run_loop.add_timer(&timer, kCFRunLoopDefaultMode);
     }
+    TICK_TIMER.store(timer.as_concrete_TypeRef() as *mut _, Ordering::SeqCst);
+    RUN_LOOP.store(run_loop.as_concrete_TypeRef() as *mut _, Ordering::SeqCst);
 
     let mtm = MainThreadMarker::new().expect("main must run on the main thread");
     let _status_bar = statusbar::install(mtm, menu_tx);
@@ -243,6 +273,9 @@ fn tick(app: &Rc<RefCell<App>>) {
             | Command::MenuSearch
             | Command::Pluck => {
                 nflow::hotkey::run_mode_command(&cmd);
+            }
+            Command::ActivateApp(name) => {
+                activate_app_by_name(&name);
             }
             _ => {}
         }
@@ -413,11 +446,18 @@ fn reload_config(app: &mut App) {
     app.watcher.set_ignored_apps(config.ignore.apps.clone());
 
     match build_bindings(&config.hotkeys) {
-        Ok(bindings) => {
+        Ok(mut bindings) => {
+            match build_app_shortcut_bindings(&config.app_shortcuts) {
+                Ok(mut app_bindings) => bindings.append(&mut app_bindings),
+                Err(e) => log::error!("failed to build app shortcut bindings on reload: {e}"),
+            }
             if let Err(e) = register_hotkeys(&bindings) {
                 log::error!("failed to re-register hotkeys: {e}");
             } else {
                 statusbar::update_shortcuts(accessibility_shortcuts(&config.hotkeys));
+                statusbar::update_app_shortcuts(
+                    config.app_shortcuts.clone().into_iter().collect(),
+                );
             }
         }
         Err(e) => {

@@ -392,6 +392,40 @@ fn activate_app(pid: i32) {
     }
 }
 
+/// Activate a running app by name, falling back to launching it via `open -a`.
+/// Matches the localized name exactly or case-insensitively.
+pub fn activate_app_by_name(name: &str) -> bool {
+    unsafe {
+        let workspace = NSWorkspace::sharedWorkspace();
+        let apps = workspace.runningApplications();
+        let count = apps.len();
+        for i in 0..count {
+            let app = &apps[i];
+            let Some(localized) = app.localizedName() else {
+                continue;
+            };
+            let localized = localized.to_string();
+            if localized == name || localized.eq_ignore_ascii_case(name) {
+                let options = NSApplicationActivationOptions::NSApplicationActivateAllWindows;
+                let _ = app.activateWithOptions(options);
+                log::info!("activated app by name: {name}");
+                return true;
+            }
+        }
+    }
+
+    match std::process::Command::new("open").args(["-a", name]).spawn() {
+        Ok(_) => {
+            log::info!("launched app by name: {name}");
+            true
+        }
+        Err(e) => {
+            log::warn!("failed to launch app {name}: {e}");
+            false
+        }
+    }
+}
+
 pub struct MacOSBridge {
     app_elements: HashMap<WindowId, AXUIElementRef>,
     last_attempted: HashMap<WindowId, (Rect, u32)>,

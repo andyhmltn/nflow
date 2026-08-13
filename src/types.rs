@@ -101,6 +101,7 @@ pub enum Command {
     MenuSearch,
     Pluck,
     Warp,
+    ActivateApp(String),
 }
 
 #[derive(Debug)]

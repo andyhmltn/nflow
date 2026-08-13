@@ -239,6 +239,20 @@ pub fn build_bindings(config: &HotkeyConfig) -> Result<Vec<HotkeyBinding>> {
     Ok(bindings)
 }
 
+/// Build bindings for the `[app-shortcuts]` section: hotkey pattern -> app name.
+pub fn build_app_shortcut_bindings(
+    shortcuts: &std::collections::BTreeMap<String, String>,
+) -> Result<Vec<HotkeyBinding>> {
+    let mut bindings = Vec::new();
+    for (pattern, app_name) in shortcuts {
+        bindings.push(HotkeyBinding {
+            hotkey: parse_hotkey(pattern)?,
+            command: Command::ActivateApp(app_name.clone()),
+        });
+    }
+    Ok(bindings)
+}
+
 type CommandCallback = Box<dyn Fn(Command) + Send>;
 static COMMAND_CALLBACK: Mutex<Option<CommandCallback>> = Mutex::new(None);
 
