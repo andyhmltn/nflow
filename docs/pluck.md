@@ -6,11 +6,11 @@ It is the screen-wide analogue of `pluck` from the author's terminal toolchain: 
 
 ## Workflow
 
-1. Trigger the hotkey (default `alt-cmd-shift-o`). nflow walks every on-screen window's accessibility tree, reads the `AXValue` of every text element (`AXStaticText`, `AXTextField`, `AXTextArea`, `AXComboBox`, `AXSearchField`) and every link (`AXLink`), reconstructs visual lines from the pieces, tokenises the result, and shows a centered palette listing the candidates.
+1. Trigger the hotkey (default `alt-cmd-shift-o`). nflow walks every on-screen window's accessibility tree, reads the `AXValue` of every text element (`AXStaticText`, `AXTextField`, `AXTextArea`, `AXComboBox`, `AXSearchField`) and every link (`AXLink`), reconstructs visual lines from the pieces, tokenises the result, and shows a centered palette listing the candidates in word mode.
 2. Type a query. The list fuzzy-filters live and the matched characters highlight in each row.
 3. Navigate with `ctrl-j` / `ctrl-k` (also arrow keys and `ctrl-n` / `ctrl-p`).
 4. `Enter` copies the highlighted token to the pasteboard and exits. `Tab` toggles a mark on the highlighted row for multi-copy; `Enter` then copies every marked token (or just the highlighted one if nothing is marked).
-5. `ctrl-f` cycles the tokenisation mode between **words** and **lines**, keeping the current query. Words are trimmed of surrounding brackets, quotes, and trailing punctuation; lines are reconstructed visual lines (see below).
+5. `ctrl-f` cycles the tokenisation mode between **words** and **lines**, keeping the current query. Words include individual tokens and a sentence suffix starting at each word; lines are reconstructed visual lines (see below).
 6. `ctrl-m` copies the selection rendered as **markdown**: each link in a reconstructed line becomes `[text](url)`. Falls back to the plain text for candidates that contain no links (e.g. words, or lines with no links). Rows that have a markdown form show an `md` marker at the right edge.
 7. `Backspace` edits the query. `Esc` exits without copying.
 
@@ -32,10 +32,10 @@ Line reconstruction is per-window, so text from adjacent tiled nflow windows nev
 
 `src/pluck/collect.rs` turns the reconstructed lines into candidates:
 
-- **Words:** `split_whitespace` on the line's plain text, then trim surrounding `()[]{}<>'"\`,;` and trailing `.` or `:`. Tokens shorter than five characters are dropped (the same threshold as the terminal `pluck`, which keeps the palette to meaningful words rather than every `a`, `the`, `of`).
+- **Words:** each whitespace-separated token is trimmed of surrounding `()[]{}<>'"\`,;` and trailing punctuation, with extra variants produced by peeling common shell-prompt, diff-marker, numeric, and bullet prefixes. Pluck also emits a raw suffix of the visual line beginning at every word, so a query can select `run codex resume <id>` rather than reconstructing it from individual words. Sentence suffixes stop at a column-style delimiter: two or more spaces, a tab, or other non-space whitespace. Candidates shorter than five characters are dropped.
 - **Lines:** whole reconstructed visual lines, trimmed. Lines shorter than five characters are dropped.
 
-Candidates are deduplicated by exact string, preserving first-seen order so the palette is stable across keystrokes. Each line candidate also carries its markdown rendering (when it contains links); word candidates never do. The mode is shown in the prompt (`[words]` / `[lines]`); `ctrl-f` re-tokenises against the already-collected pieces without re-walking the accessibility tree, so the switch is instant.
+Candidates are deduplicated by exact string, preserving the most recently displayed visual line first. A literal query prefix is shown before other fuzzy matches, case-insensitively unless the query contains an uppercase character. Each line candidate also carries its markdown rendering (when it contains links); word candidates never do. The mode is shown in the prompt (`[words]` / `[lines]`); `ctrl-f` re-tokenises against the already-collected pieces without re-walking the accessibility tree, so the switch is instant.
 
 ## Element collection
 

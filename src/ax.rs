@@ -414,7 +414,10 @@ pub fn activate_app_by_name(name: &str) -> bool {
         }
     }
 
-    match std::process::Command::new("open").args(["-a", name]).spawn() {
+    match std::process::Command::new("open")
+        .args(["-a", name])
+        .spawn()
+    {
         Ok(_) => {
             log::info!("launched app by name: {name}");
             true

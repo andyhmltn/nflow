@@ -13,13 +13,19 @@ use core_foundation_sys::runloop::{CFRunLoopRef, CFRunLoopTimerContext, CFRunLoo
 use objc2_app_kit::NSApplication;
 use objc2_foundation::MainThreadMarker;
 
-use nflow::ax::{activate_app_by_name, focused_window_for_pid, frontmost_app, is_accessibility_enabled, MacOSBridge};
+use nflow::ax::{
+    activate_app_by_name, focused_window_for_pid, frontmost_app, is_accessibility_enabled,
+    MacOSBridge,
+};
 use nflow::config::{
     app_layout_lookup_with_scene, effective_gaps, hide_titles_with_scene, parse_config_file,
     parse_config_str, scene_list, select_profile, HotkeyConfig,
 };
 use nflow::daemon;
-use nflow::hotkey::{build_app_shortcut_bindings, build_bindings, register_carbon_hotkeys, register_hotkeys, set_command_callback};
+use nflow::hotkey::{
+    build_app_shortcut_bindings, build_bindings, register_carbon_hotkeys, register_hotkeys,
+    set_command_callback,
+};
 use nflow::screen::{
     check_screen_changed, get_screen_rect, get_screen_width, register_screen_change_callback,
 };
@@ -93,13 +99,17 @@ fn main() {
         Some("run") => run_daemon(),
         Some("stop") => daemon::stop(),
         Some("status") => daemon::status(),
+        Some("enable-autostart") => daemon::enable_autostart(),
+        Some("disable-autostart") => daemon::disable_autostart(),
         Some("restart") => {
             daemon::stop();
             daemon::start();
         }
         Some(other) => {
             eprintln!("unknown command: {other}");
-            eprintln!("usage: nflow [start|run|stop|status|restart]");
+            eprintln!(
+                "usage: nflow [start|run|stop|status|restart|enable-autostart|disable-autostart]"
+            );
             std::process::exit(1);
         }
     }
@@ -154,7 +164,8 @@ fn run_daemon() {
     log::info!("built {} hotkey bindings", bindings.len());
     let mut bindings = bindings;
     bindings.extend(
-        build_app_shortcut_bindings(&config.app_shortcuts).expect("failed to build app shortcut bindings"),
+        build_app_shortcut_bindings(&config.app_shortcuts)
+            .expect("failed to build app shortcut bindings"),
     );
     log::info!("built {} app shortcut bindings", config.app_shortcuts.len());
     register_hotkeys(&bindings).expect("failed to register hotkeys");
@@ -456,9 +467,7 @@ fn reload_config(app: &mut App) {
                 log::error!("failed to re-register hotkeys: {e}");
             } else {
                 statusbar::update_shortcuts(accessibility_shortcuts(&config.hotkeys));
-                statusbar::update_app_shortcuts(
-                    config.app_shortcuts.clone().into_iter().collect(),
-                );
+                statusbar::update_app_shortcuts(config.app_shortcuts.clone().into_iter().collect());
             }
             if let Err(e) = register_carbon_hotkeys(&bindings) {
                 log::error!("failed to re-register carbon hotkeys: {e}");

@@ -41,6 +41,18 @@ cargo build --release
 
 On first launch nflow writes a default config to `~/.config/nflow/config.toml` and exits with an error if Accessibility permission is missing. Grant it, then re-run.
 
+`./deploy.sh` also configures nflow to start automatically at the next login. This uses a per-user macOS LaunchAgent, since Accessibility permissions and the menu-bar icon require a logged-in graphical session. To configure this after a manual install, run:
+
+```sh
+nflow enable-autostart
+```
+
+To remove it:
+
+```sh
+nflow disable-autostart
+```
+
 For verbose logs:
 
 ```sh

@@ -62,7 +62,7 @@ pub fn toggle(screen: Rect) {
         crate::toast::show("No text on screen");
         return;
     }
-    let mode = Mode::Lines;
+    let mode = Mode::Words;
     let candidates = collect::extract(&lines, mode);
     if candidates.is_empty() {
         crate::toast::show("No text on screen");
@@ -220,20 +220,28 @@ fn recompute(session: &mut Session) {
             .collect();
         return;
     }
-    let mut scored: Vec<(i64, usize)> = Vec::new();
+    let mut prefix_matches = Vec::new();
+    let mut other_matches = Vec::new();
     for (idx, candidate) in session.candidates.iter().enumerate() {
-        let Some(m) = crate::menusearch::fuzzy::match_query(&session.query, &candidate.display)
-        else {
+        if crate::menusearch::fuzzy::match_query(&session.query, &candidate.display).is_none() {
             continue;
-        };
-        scored.push((m.score, idx));
+        }
+        if starts_with_query(&candidate.display, &session.query) {
+            prefix_matches.push(idx);
+        } else {
+            other_matches.push(idx);
+        }
     }
-    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-    session.filtered = scored
-        .into_iter()
-        .map(|(_, idx)| idx)
-        .take(MAX_FILTERED)
-        .collect();
+    prefix_matches.extend(other_matches);
+    session.filtered = prefix_matches.into_iter().take(MAX_FILTERED).collect();
+}
+
+fn starts_with_query(candidate: &str, query: &str) -> bool {
+    if query.chars().any(char::is_uppercase) {
+        candidate.starts_with(query)
+    } else {
+        candidate.to_lowercase().starts_with(&query.to_lowercase())
+    }
 }
 
 fn render(session: &Session) {
@@ -487,5 +495,17 @@ mod tests {
     #[test]
     fn plain_letters_are_not_navigation_without_ctrl() {
         assert_eq!(nav_delta(0x26, false), None);
+    }
+
+    #[test]
+    fn lowercase_queries_prioritise_case_insensitive_prefixes() {
+        assert!(starts_with_query("Codex resume", "codex"));
+        assert!(!starts_with_query("run codex resume", "codex"));
+    }
+
+    #[test]
+    fn uppercase_queries_require_case_sensitive_prefixes() {
+        assert!(starts_with_query("Codex resume", "Codex"));
+        assert!(!starts_with_query("codex resume", "Codex"));
     }
 }

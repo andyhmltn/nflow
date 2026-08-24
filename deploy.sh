@@ -48,6 +48,8 @@ rm -rf "$DEST/$APP_NAME.app"
 cp -R "$APP" "$DEST/$APP_NAME.app"
 rm -rf "$BUILD_DIR"
 
-echo "Done. Launch via the 'nflow' command or $DEST/$APP_NAME.app"
+"$DEST/$APP_NAME.app/Contents/MacOS/nflow" enable-autostart
 
-nflow restart
+"$DEST/$APP_NAME.app/Contents/MacOS/nflow" restart
+
+echo "Done. Launch via the 'nflow' command or $DEST/$APP_NAME.app"

@@ -470,5 +470,3 @@ apps = ["Zen"]
         assert!(config.app_shortcuts.is_empty());
     }
 }
-
-

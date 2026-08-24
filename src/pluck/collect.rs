@@ -257,7 +257,7 @@ pub struct Candidate {
 pub fn extract(lines: &[Line], mode: Mode) -> Vec<Candidate> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
-    for line in lines {
+    for line in lines.iter().rev() {
         for token in tokenize(&line.plain, mode) {
             if token.len() < MIN_TOKEN_LEN || !seen.insert(token.clone()) {
                 continue;
@@ -284,22 +284,145 @@ pub fn join_separator(mode: Mode) -> &'static str {
 
 fn tokenize(value: &str, mode: Mode) -> Vec<String> {
     match mode {
-        Mode::Words => value
-            .split_whitespace()
-            .map(|t| trim_token(t).to_owned())
-            .collect(),
+        Mode::Words => {
+            let mut tokens = Vec::new();
+            for token in value.split_whitespace() {
+                tokens.extend(token_variants(token));
+            }
+            tokens.extend(word_slices(value).into_iter().map(str::to_owned));
+            tokens
+        }
         Mode::Lines => value.lines().map(|l| l.trim().to_owned()).collect(),
     }
 }
 
-fn trim_token(token: &str) -> &str {
-    let stripped = token.trim_matches(|c| {
-        matches!(
+fn is_wrap_junk(c: char) -> bool {
+    matches!(
+        c,
+        '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | '\'' | '"' | '`' | ',' | ';'
+    )
+}
+
+fn is_trailing_junk(c: char) -> bool {
+    is_wrap_junk(c) || matches!(c, '.' | ':')
+}
+
+fn is_leading_junk(c: char) -> bool {
+    is_wrap_junk(c)
+        || c.is_ascii_digit()
+        || matches!(
             c,
-            '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | '\'' | '"' | '`' | ',' | ';'
+            '.' | ':'
+                | '='
+                | '|'
+                | '&'
+                | '*'
+                | '!'
+                | '?'
+                | '#'
+                | '@'
+                | '$'
+                | '%'
+                | '^'
+                | '~'
+                | '/'
+                | '\\'
+                | '+'
+                | '-'
         )
-    });
-    stripped.trim_end_matches(['.', ':'])
+}
+
+fn trim_token(token: &str) -> &str {
+    let stripped = token.trim_matches(is_wrap_junk);
+    stripped.trim_end_matches(is_trailing_junk)
+}
+
+fn token_variants(token: &str) -> Vec<String> {
+    let base = trim_token(token);
+    if base.is_empty() {
+        return Vec::new();
+    }
+
+    let mut variants = Vec::new();
+    let mut seen = HashSet::new();
+    let mut push = |value: &str| {
+        if !value.is_empty() && seen.insert(value.to_owned()) {
+            variants.push(value.to_owned());
+        }
+    };
+    push(base);
+
+    let mut leading = base;
+    while let Some(c) = leading.chars().next() {
+        if !is_leading_junk(c) {
+            break;
+        }
+        leading = &leading[c.len_utf8()..];
+        push(leading.trim_end_matches(is_trailing_junk));
+    }
+
+    let mut trailing = base;
+    while let Some(c) = trailing.chars().last() {
+        if !is_trailing_junk(c) {
+            break;
+        }
+        trailing = &trailing[..trailing.len() - c.len_utf8()];
+        push(trailing);
+    }
+
+    variants
+}
+
+fn word_slices(line: &str) -> Vec<&str> {
+    let mut slices = Vec::new();
+    let mut sentence_start = 0;
+    let mut whitespace_start = None;
+    let mut between_sentences = false;
+
+    for (index, c) in line.char_indices() {
+        if between_sentences {
+            if !c.is_whitespace() {
+                sentence_start = index;
+                whitespace_start = None;
+                between_sentences = false;
+            }
+            continue;
+        }
+
+        if c.is_whitespace() {
+            match whitespace_start {
+                Some(start) => {
+                    append_word_slices(&mut slices, &line[sentence_start..start]);
+                    between_sentences = true;
+                }
+                None if c == ' ' => whitespace_start = Some(index),
+                None => {
+                    append_word_slices(&mut slices, &line[sentence_start..index]);
+                    between_sentences = true;
+                }
+            }
+        } else {
+            whitespace_start = None;
+        }
+    }
+
+    if !between_sentences {
+        append_word_slices(&mut slices, &line[sentence_start..]);
+    }
+
+    slices
+}
+
+fn append_word_slices<'a>(slices: &mut Vec<&'a str>, sentence: &'a str) {
+    let mut at_word_start = true;
+    for (index, c) in sentence.char_indices() {
+        if c == ' ' {
+            at_word_start = true;
+        } else if at_word_start {
+            slices.push(sentence[index..].trim_end());
+            at_word_start = false;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -449,7 +572,42 @@ mod tests {
             .into_iter()
             .map(|c| c.display)
             .collect();
-        assert_eq!(out, vec!["hello", "world!"]);
+        assert_eq!(out, vec!["hello", "world!", "(hello), world!"]);
+    }
+
+    #[test]
+    fn words_include_sentence_slices_starting_at_each_word() {
+        let lines = vec![line(
+            "To continue this session, run codex resume 01a01ff8",
+            vec![],
+        )];
+        let out: Vec<String> = extract(&lines, Mode::Words)
+            .into_iter()
+            .map(|c| c.display)
+            .collect();
+
+        assert!(out.contains(&"codex resume 01a01ff8".to_string()));
+        assert!(out.contains(&"run codex resume 01a01ff8".to_string()));
+    }
+
+    #[test]
+    fn sentence_slices_stop_at_column_whitespace() {
+        assert_eq!(
+            word_slices("alpha bravo  charlie\tdelta echo"),
+            vec!["alpha bravo", "bravo", "charlie", "delta echo", "echo"]
+        );
+    }
+
+    #[test]
+    fn words_include_variants_without_prompt_prefixes() {
+        let lines = vec![line(">>0defAbcd:", vec![])];
+        let out: Vec<String> = extract(&lines, Mode::Words)
+            .into_iter()
+            .map(|c| c.display)
+            .collect();
+
+        assert!(out.contains(&"0defAbcd".to_string()));
+        assert!(out.contains(&"defAbcd".to_string()));
     }
 
     #[test]
@@ -459,17 +617,29 @@ mod tests {
             .into_iter()
             .map(|c| c.display)
             .collect();
-        assert_eq!(out, vec!["abcde"]);
+        assert_eq!(
+            out,
+            vec![
+                "abcde",
+                "a ab abc abcd abcde",
+                "ab abc abcd abcde",
+                "abc abcd abcde",
+                "abcd abcde"
+            ]
+        );
     }
 
     #[test]
-    fn dedups_preserving_first_seen() {
+    fn dedups_preserving_latest_line() {
         let lines = vec![line("alpha gamma", vec![]), line("gamma delta", vec![])];
         let out: Vec<String> = extract(&lines, Mode::Words)
             .into_iter()
             .map(|c| c.display)
             .collect();
-        assert_eq!(out, vec!["alpha", "gamma", "delta"]);
+        assert_eq!(
+            out,
+            vec!["gamma", "delta", "gamma delta", "alpha", "alpha gamma"]
+        );
     }
 
     #[test]
