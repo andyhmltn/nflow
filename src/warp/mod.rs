@@ -13,6 +13,7 @@ use crate::types::Rect;
 const PROMPT_X: f64 = 24.0;
 const PROMPT_Y: f64 = 24.0;
 const SPACE_KEYCODE: u32 = 0x31;
+const MAX_PICK_LEVELS: usize = 3;
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 static SESSION: Mutex<Option<Session>> = Mutex::new(None);
@@ -99,7 +100,7 @@ fn descend(index: usize) {
         return;
     };
     let picked = session.cells[index];
-    if grid::is_terminal(picked) {
+    if should_finish_after_pick(session.stack.len(), picked) {
         let (cx, cy) = grid::centre(picked);
         drop(guard);
         finish_at(cx, cy);
@@ -108,6 +109,10 @@ fn descend(index: usize) {
     session.stack.push(picked);
     session.cells = grid::subdivide(picked);
     render(session);
+}
+
+fn should_finish_after_pick(current_level: usize, picked: Rect) -> bool {
+    current_level >= MAX_PICK_LEVELS || grid::is_terminal(picked)
 }
 
 fn pop_level() {
@@ -257,5 +262,14 @@ mod tests {
         assert_eq!(badges[0].label, "a");
         assert_eq!(badges[0].x, 50.0);
         assert_eq!(badges[0].y, screen_height - 50.0);
+    }
+
+    #[test]
+    fn third_picker_selection_is_final() {
+        let picked = r(0.0, 0.0, 30.0, 30.0);
+
+        assert!(!should_finish_after_pick(1, picked));
+        assert!(!should_finish_after_pick(2, picked));
+        assert!(should_finish_after_pick(3, picked));
     }
 }
