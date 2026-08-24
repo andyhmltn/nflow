@@ -254,6 +254,8 @@ pub fn build_app_shortcut_bindings(
 }
 
 type CommandCallback = Box<dyn Fn(Command) + Send>;
+static BINDING_MAP: Mutex<Option<HashMap<(u32, u32), Command>>> = Mutex::new(None);
+
 static COMMAND_CALLBACK: Mutex<Option<CommandCallback>> = Mutex::new(None);
 
 pub fn set_command_callback<F: Fn(Command) + Send + 'static>(f: F) {
@@ -265,8 +267,6 @@ const CG_EVENT_FLAG_MASK_ALTERNATE: u64 = 0x00080000;
 const CG_EVENT_FLAG_MASK_SHIFT: u64 = 0x00020000;
 const CG_EVENT_FLAG_MASK_CONTROL: u64 = 0x00040000;
 const CG_EVENT_FLAG_MASK_COMMAND: u64 = 0x00100000;
-
-static BINDING_MAP: Mutex<Option<HashMap<(u32, u32), Command>>> = Mutex::new(None);
 
 fn cg_flags_to_modifier_mask(flags: u64) -> u32 {
     let mut mask = 0u32;
@@ -512,7 +512,6 @@ pub fn register_hotkeys(bindings: &[HotkeyBinding]) -> Result<()> {
 
     log::info!("registering {} hotkey bindings via CGEventTap", map.len());
     *BINDING_MAP.lock().unwrap() = Some(map);
-
     let tap = unsafe {
         CGEventTapCreate(
             K_CG_SESSION_EVENT_TAP,
@@ -548,6 +547,202 @@ pub fn register_hotkeys(bindings: &[HotkeyBinding]) -> Result<()> {
     }
 
     log::info!("CGEventTap installed successfully");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Carbon RegisterEventHotKey: global hotkeys that work in every context,
+// including when a text input context (text field, IME) has focus. This is
+// the same mechanism Raycast, Alfred etc. use. CGEventTap events go through
+// the window server's input pipeline, which can miss key combinations when a
+// text field is focused; Carbon hotkeys are dispatched by the Event Manager
+// before any text input processing.
+// ---------------------------------------------------------------------------
+
+type EventHotKeyRef = *mut std::ffi::c_void;
+type EventHandlerRef = *mut std::ffi::c_void;
+type EventRef = *mut std::ffi::c_void;
+type EventTargetRef = *mut std::ffi::c_void;
+type EventHandlerCallRef = *mut std::ffi::c_void;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct EventHotKeyID {
+    signature: u32,
+    id: u32,
+}
+
+#[repr(C)]
+struct EventTypeSpec {
+    event_class: u32,
+    event_kind: u32,
+}
+
+type EventHandlerUPP =
+    unsafe extern "C" fn(EventHandlerCallRef, EventRef, *mut std::ffi::c_void) -> i32;
+
+const K_EVENT_CLASS_HOT_KEY: u32 = 0x686B_2020; // 'hk  '
+const K_EVENT_HOT_KEY_PRESSED: u32 = 5;
+const K_EVENT_PARAM_DIRECT_OBJECT: u32 = 0x2D2D_2D2D; // '----'
+const TYPE_EVENT_HOT_KEY_ID: u32 = 0x686B_6964; // 'hkid'
+const HOT_KEY_SIGNATURE: u32 = 0x6E66_6C6F; // 'nflo'
+
+/// Wrapper for raw pointer to implement Send/Sync for the static.
+#[derive(Clone, Copy)]
+struct HotKeyRef(*mut std::ffi::c_void);
+unsafe impl Send for HotKeyRef {}
+unsafe impl Sync for HotKeyRef {}
+
+static CARBON_HOTKEYS: Mutex<Vec<(HotKeyRef, Command)>> = Mutex::new(Vec::new());
+static CARBON_HANDLER: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
+
+#[link(name = "Carbon", kind = "framework")]
+extern "C" {
+    fn GetApplicationEventTarget() -> EventTargetRef;
+    fn InstallEventHandler(
+        in_target: EventTargetRef,
+        in_handler: EventHandlerUPP,
+        in_num_types: u32,
+        in_list: *const EventTypeSpec,
+        in_user_data: *mut std::ffi::c_void,
+        out_ref: *mut EventHandlerRef,
+    ) -> i32;
+    fn RegisterEventHotKey(
+        in_hot_key_code: u32,
+        in_hot_key_modifiers: u32,
+        in_hot_key_id: EventHotKeyID,
+        in_target: EventTargetRef,
+        in_options: u32,
+        out_ref: *mut EventHotKeyRef,
+    ) -> i32;
+    fn UnregisterEventHotKey(in_hot_key: EventHotKeyRef) -> i32;
+    fn GetEventParameter(
+        in_event: EventRef,
+        in_name: u32,
+        in_type: u32,
+        out_actual_type: *mut u32,
+        in_buffer_size: u32,
+        out_actual_size: *mut u32,
+        out_data: *mut std::ffi::c_void,
+    ) -> i32;
+}
+
+unsafe extern "C" fn carbon_hotkey_handler(
+    _in_call_ref: EventHandlerCallRef,
+    in_event: EventRef,
+    _in_user_data: *mut std::ffi::c_void,
+) -> i32 {
+    let mut hotkey_id = EventHotKeyID {
+        signature: 0,
+        id: 0,
+    };
+    let mut actual_size: u32 = 0;
+    let err = GetEventParameter(
+        in_event,
+        K_EVENT_PARAM_DIRECT_OBJECT,
+        TYPE_EVENT_HOT_KEY_ID,
+        std::ptr::null_mut(),
+        std::mem::size_of::<EventHotKeyID>() as u32,
+        &mut actual_size,
+        &mut hotkey_id as *mut EventHotKeyID as *mut std::ffi::c_void,
+    );
+    if err != 0 {
+        log::warn!("carbon hotkey handler: GetEventParameter failed with status {err}");
+        return 0;
+    }
+    if hotkey_id.signature != HOT_KEY_SIGNATURE {
+        return 0;
+    }
+
+    let command = {
+        let hotkeys = CARBON_HOTKEYS.lock().unwrap();
+        hotkeys
+            .get(hotkey_id.id as usize)
+            .map(|(_, cmd)| cmd.clone())
+    };
+
+    if let Some(cmd) = command {
+        if run_mode_command(&cmd) {
+            return 0;
+        }
+        log::info!("carbon hotkey fired: {cmd:?}");
+        let cb = COMMAND_CALLBACK.lock().unwrap();
+        if let Some(f) = cb.as_ref() {
+            f(cmd);
+        }
+    }
+    0
+}
+
+pub fn unregister_carbon_hotkeys() {
+    let mut hotkeys = CARBON_HOTKEYS.lock().unwrap();
+    for (hotkey_ref, _) in hotkeys.iter() {
+        unsafe {
+            UnregisterEventHotKey(hotkey_ref.0);
+        }
+    }
+    hotkeys.clear();
+}
+
+pub fn register_carbon_hotkeys(bindings: &[HotkeyBinding]) -> Result<()> {
+    unregister_carbon_hotkeys();
+
+    let mut hotkeys = CARBON_HOTKEYS.lock().unwrap();
+
+    if CARBON_HANDLER.load(Ordering::SeqCst).is_null() {
+        let spec = EventTypeSpec {
+            event_class: K_EVENT_CLASS_HOT_KEY,
+            event_kind: K_EVENT_HOT_KEY_PRESSED,
+        };
+        let mut handler: EventHandlerRef = std::ptr::null_mut();
+        let err = unsafe {
+            InstallEventHandler(
+                GetApplicationEventTarget(),
+                carbon_hotkey_handler,
+                1,
+                &spec,
+                std::ptr::null_mut(),
+                &mut handler,
+            )
+        };
+        if err != 0 {
+            return Err(NflowError::HotkeyRegistration(format!(
+                "InstallEventHandler failed with status {err}"
+            )));
+        }
+        CARBON_HANDLER.store(handler, Ordering::SeqCst);
+        log::info!("installed Carbon hotkey event handler");
+    }
+
+    let mut registered = 0;
+    for binding in bindings {
+        let id = EventHotKeyID {
+            signature: HOT_KEY_SIGNATURE,
+            id: hotkeys.len() as u32,
+        };
+        let mut hotkey_ref: EventHotKeyRef = std::ptr::null_mut();
+        let err = unsafe {
+            RegisterEventHotKey(
+                binding.hotkey.keycode,
+                binding.hotkey.modifiers,
+                id,
+                GetApplicationEventTarget(),
+                0,
+                &mut hotkey_ref,
+            )
+        };
+        if err != 0 {
+            log::warn!(
+                "failed to register Carbon hotkey {:?} (status {err})",
+                binding.hotkey
+            );
+            continue;
+        }
+        hotkeys.push((HotKeyRef(hotkey_ref), binding.command.clone()));
+        registered += 1;
+    }
+
+    log::info!("registered {registered} Carbon hotkeys");
     Ok(())
 }
 

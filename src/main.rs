@@ -19,7 +19,7 @@ use nflow::config::{
     parse_config_str, scene_list, select_profile, HotkeyConfig,
 };
 use nflow::daemon;
-use nflow::hotkey::{build_app_shortcut_bindings, build_bindings, register_hotkeys, set_command_callback};
+use nflow::hotkey::{build_app_shortcut_bindings, build_bindings, register_carbon_hotkeys, register_hotkeys, set_command_callback};
 use nflow::screen::{
     check_screen_changed, get_screen_rect, get_screen_width, register_screen_change_callback,
 };
@@ -159,6 +159,7 @@ fn run_daemon() {
     log::info!("built {} app shortcut bindings", config.app_shortcuts.len());
     register_hotkeys(&bindings).expect("failed to register hotkeys");
     log::info!("hotkeys registered successfully");
+    register_carbon_hotkeys(&bindings).expect("failed to register carbon hotkeys");
     statusbar::update_shortcuts(accessibility_shortcuts(&config.hotkeys));
     statusbar::update_app_shortcuts(config.app_shortcuts.clone().into_iter().collect());
 
@@ -458,6 +459,9 @@ fn reload_config(app: &mut App) {
                 statusbar::update_app_shortcuts(
                     config.app_shortcuts.clone().into_iter().collect(),
                 );
+            }
+            if let Err(e) = register_carbon_hotkeys(&bindings) {
+                log::error!("failed to re-register carbon hotkeys: {e}");
             }
         }
         Err(e) => {
