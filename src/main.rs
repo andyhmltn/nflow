@@ -14,8 +14,7 @@ use objc2_app_kit::NSApplication;
 use objc2_foundation::MainThreadMarker;
 
 use nflow::ax::{
-    activate_app_by_name, focused_window_for_pid, frontmost_app, is_accessibility_enabled,
-    MacOSBridge,
+    activate_app_by_name, focused_window_for_pid, is_accessibility_enabled, MacOSBridge,
 };
 use nflow::config::{
     app_layout_lookup_with_scene, effective_gaps, hide_titles_with_scene, parse_config_file,
@@ -32,7 +31,7 @@ use nflow::screen::{
 use nflow::space::SpaceManager;
 use nflow::statusbar;
 use nflow::types::Command;
-use nflow::watcher::WindowWatcher;
+use nflow::watcher::{frontmost_window, WindowWatcher};
 
 const DEFAULT_CONFIG: &str = include_str!("../default_config.toml");
 
@@ -309,8 +308,8 @@ fn tick(app: &Rc<RefCell<App>>) {
         }
     }
 
-    let frontmost = frontmost_app();
-    let frontmost_pid = frontmost.as_ref().map(|(pid, _)| *pid);
+    let frontmost = frontmost_window();
+    let frontmost_pid = frontmost.as_ref().map(|window| window.pid);
 
     for win in new_windows {
         let helper_of_frontmost = frontmost_pid
@@ -329,38 +328,41 @@ fn tick(app: &Rc<RefCell<App>>) {
             continue;
         }
 
-        app.space_manager
-            .handle_window_created(win.window_id, &win.app_name, win.pid);
-
         if frontmost_pid == Some(win.pid) {
-            log::info!(
-                "new window for frontmost app \"{}\" (wid={}), following to its space",
-                win.app_name,
-                win.window_id
-            );
-            app.space_manager.handle_focus_changed(win.window_id);
-            app.last_frontmost_pid = Some(win.pid);
+            app.space_manager
+                .handle_visible_window_created(win.window_id, &win.app_name, win.pid);
+            if win.app_name != "Finder" {
+                app.space_manager.handle_focus_changed(win.window_id);
+                app.last_frontmost_pid = Some(win.pid);
+            }
+        } else {
+            app.space_manager
+                .handle_window_created(win.window_id, &win.app_name, win.pid);
         }
     }
 
-    if let Some((pid, name)) = frontmost {
-        let ax_focused = focused_window_for_pid(pid);
-        if let Some(focused_wid) = frontmost_follow_target(
-            app.last_frontmost_pid,
-            pid,
-            ax_focused,
-            &app.bridge_registry,
-        ) {
-            log::info!(
-                "frontmost changed: {:?} -> {} (pid {}), ax_focused={:?}, follow={}",
+    if let Some(frontmost) = frontmost {
+        let pid = frontmost.pid;
+        let name = frontmost.app_name;
+        if name != "Finder" {
+            let ax_focused = focused_window_for_pid(pid);
+            if let Some(focused_wid) = frontmost_follow_target(
                 app.last_frontmost_pid,
-                name,
                 pid,
                 ax_focused,
-                focused_wid,
-            );
-            app.last_frontmost_pid = Some(pid);
-            app.space_manager.handle_focus_changed(focused_wid);
+                &app.bridge_registry,
+            ) {
+                log::info!(
+                    "frontmost changed: {:?} -> {} (pid {}), ax_focused={:?}, follow={}",
+                    app.last_frontmost_pid,
+                    name,
+                    pid,
+                    ax_focused,
+                    focused_wid,
+                );
+                app.last_frontmost_pid = Some(pid);
+                app.space_manager.handle_focus_changed(focused_wid);
+            }
         }
     }
 

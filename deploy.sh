@@ -10,13 +10,16 @@ APP="$BUILD_DIR/$APP_NAME.app"
 MACOS="$APP/Contents/MacOS"
 
 mkdir -p "$MACOS"
-cp target/release/nflow "$MACOS/nflow"
+cp target/release/nflow "$MACOS/nflow-bin"
 
 cat > "$MACOS/$APP_NAME" <<'STUB'
 #!/bin/sh
-exec "$(dirname "$0")/nflow" run
+if [ "$#" -eq 0 ]; then
+    set -- run
+fi
+exec "$(dirname "$0")/nflow-bin" "$@"
 STUB
-chmod +x "$MACOS/$APP_NAME" "$MACOS/nflow"
+chmod +x "$MACOS/$APP_NAME" "$MACOS/nflow-bin"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

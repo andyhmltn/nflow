@@ -144,6 +144,19 @@ pub fn discover_windows() -> Vec<DiscoveredWindow> {
     results
 }
 
+pub fn frontmost_window() -> Option<DiscoveredWindow> {
+    let keys = WindowKeys::new();
+    let mut frontmost = None;
+
+    iter_window_dicts(|dict| {
+        if frontmost.is_none() {
+            frontmost = extract_window(dict, &keys);
+        }
+    });
+
+    frontmost
+}
+
 fn pid_is_running(pid: i32) -> bool {
     unsafe { libc::kill(pid, 0) == 0 }
 }

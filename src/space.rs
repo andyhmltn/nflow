@@ -141,6 +141,20 @@ impl<B: WindowBridge> SpaceManager<B> {
     }
 
     pub fn handle_window_created(&mut self, window_id: WindowId, app_name: &str, pid: i32) {
+        self.handle_window_created_with_visibility(window_id, app_name, pid, false);
+    }
+
+    pub fn handle_visible_window_created(&mut self, window_id: WindowId, app_name: &str, pid: i32) {
+        self.handle_window_created_with_visibility(window_id, app_name, pid, true);
+    }
+
+    fn handle_window_created_with_visibility(
+        &mut self,
+        window_id: WindowId,
+        app_name: &str,
+        pid: i32,
+        keep_visible: bool,
+    ) {
         self.bridge.register_window(window_id, pid);
         self.window_to_app.insert(window_id, app_name.to_string());
 
@@ -175,7 +189,7 @@ impl<B: WindowBridge> SpaceManager<B> {
 
         if target_space == self.active_space {
             self.retile_active_space();
-        } else {
+        } else if !keep_visible {
             let _ = self.bridge.hide(window_id);
         }
     }
@@ -230,10 +244,6 @@ impl<B: WindowBridge> SpaceManager<B> {
         self.spaces.entry(target).or_default();
 
         self.retile_active_space();
-
-        if let Some(&wid) = self.per_space_focus.get(&target) {
-            let _ = self.bridge.focus(wid);
-        }
     }
 
     pub fn reload_config(
@@ -530,7 +540,7 @@ mod tests {
     }
 
     #[test]
-    fn focus_tracking_per_space() {
+    fn focus_change_does_not_reactivate_the_selected_window() {
         let mut mgr = make_manager();
         mgr.handle_window_created(100, "Zen Browser", 0);
         mgr.handle_window_created(101, "Ghostty", 0);
@@ -543,7 +553,7 @@ mod tests {
         mgr.handle_focus_changed(101);
 
         let calls = mgr.bridge.take_calls();
-        assert!(calls.iter().any(|c| matches!(c, MockCall::Focus(101))));
+        assert!(!calls.iter().any(|c| matches!(c, MockCall::Focus(101))));
     }
 
     #[test]
