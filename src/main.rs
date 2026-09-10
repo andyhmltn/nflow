@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::mpsc;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use core_foundation::base::TCFType;
 use core_foundation::date::CFAbsoluteTimeGetCurrent;
@@ -34,6 +34,40 @@ use nflow::types::Command;
 use nflow::watcher::{frontmost_window, WindowWatcher};
 
 const DEFAULT_CONFIG: &str = include_str!("../default_config.toml");
+const APP_ACTIVATION_TIMEOUT: Duration = Duration::from_secs(2);
+
+struct PendingActivation {
+    app_name: String,
+    deadline: Instant,
+}
+
+impl PendingActivation {
+    fn new(app_name: String, now: Instant) -> Self {
+        Self {
+            app_name,
+            deadline: now + APP_ACTIVATION_TIMEOUT,
+        }
+    }
+
+    fn accepts(&self, app_name: &str) -> bool {
+        self.app_name.eq_ignore_ascii_case(app_name)
+    }
+}
+
+fn should_suppress_frontmost(
+    pending: &mut Option<PendingActivation>,
+    app_name: &str,
+    now: Instant,
+) -> bool {
+    let Some(activation) = pending.take() else {
+        return false;
+    };
+    if activation.accepts(app_name) || now >= activation.deadline {
+        return false;
+    }
+    *pending = Some(activation);
+    true
+}
 
 struct App {
     space_manager: SpaceManager<MacOSBridge>,
@@ -44,6 +78,7 @@ struct App {
     command_rx: mpsc::Receiver<Command>,
     bridge_registry: BTreeMap<u32, i32>,
     last_frontmost_pid: Option<i32>,
+    pending_activation: Option<PendingActivation>,
     terminal: Option<String>,
     active_scene: usize,
     scene_labels: Vec<(usize, String)>,
@@ -145,6 +180,7 @@ fn run_daemon() {
     let screen_width = get_screen_width();
     let profile = select_profile(&config, screen_width).expect("no matching profile");
     let lookup = app_layout_lookup_with_scene(profile, 0);
+    let configured_apps = lookup.keys().cloned().collect();
     let hide_titles = hide_titles_with_scene(profile, 0);
 
     let screen_rect = get_screen_rect();
@@ -183,7 +219,7 @@ fn run_daemon() {
         wake_tick();
     });
 
-    let mut watcher = WindowWatcher::new(config.ignore.apps.clone());
+    let mut watcher = WindowWatcher::new(config.ignore.apps.clone(), configured_apps);
     let (initial_windows, _) = watcher.poll();
 
     let app = Rc::new(RefCell::new(App {
@@ -195,6 +231,7 @@ fn run_daemon() {
         command_rx,
         bridge_registry: BTreeMap::new(),
         last_frontmost_pid: None,
+        pending_activation: None,
         terminal: config.terminal.clone(),
         active_scene: 0,
         scene_labels: scene_list(profile),
@@ -285,8 +322,11 @@ fn tick(app: &Rc<RefCell<App>>) {
             | Command::Pluck => {
                 nflow::hotkey::run_mode_command(&cmd);
             }
-            Command::ActivateApp(name) => {
-                activate_app_by_name(&name);
+            Command::ActivateApp(name) if activate_app_by_name(&name) => {
+                let prepared = app.space_manager.prepare_app_activation(&name);
+                if prepared {
+                    app.pending_activation = Some(PendingActivation::new(name, Instant::now()));
+                }
             }
             _ => {}
         }
@@ -312,39 +352,22 @@ fn tick(app: &Rc<RefCell<App>>) {
     let frontmost_pid = frontmost.as_ref().map(|window| window.pid);
 
     for win in new_windows {
-        let helper_of_frontmost = frontmost_pid
-            .is_some_and(|fp| fp != win.pid && app.bridge_registry.values().any(|&p| p == fp));
-
         app.bridge_registry.insert(win.window_id, win.pid);
+        app.space_manager
+            .handle_window_created(win.window_id, &win.app_name, win.pid);
 
-        if helper_of_frontmost {
-            log::info!(
-                "helper/popup window detected: app=\"{}\" wid={} pid={}, spawned by frontmost pid={:?}, leaving untiled",
-                win.app_name,
-                win.window_id,
-                win.pid,
-                frontmost_pid,
-            );
-            continue;
-        }
-
-        if frontmost_pid == Some(win.pid) {
-            app.space_manager
-                .handle_visible_window_created(win.window_id, &win.app_name, win.pid);
-            if win.app_name != "Finder" {
-                app.space_manager.handle_focus_changed(win.window_id);
-                app.last_frontmost_pid = Some(win.pid);
-            }
-        } else {
-            app.space_manager
-                .handle_window_created(win.window_id, &win.app_name, win.pid);
+        if frontmost_pid == Some(win.pid) && win.app_name != "Finder" {
+            app.space_manager.handle_focus_changed(win.window_id);
+            app.last_frontmost_pid = Some(win.pid);
         }
     }
 
     if let Some(frontmost) = frontmost {
         let pid = frontmost.pid;
         let name = frontmost.app_name;
-        if name != "Finder" {
+        let suppress =
+            should_suppress_frontmost(&mut app.pending_activation, &name, Instant::now());
+        if !suppress && name != "Finder" {
             let ax_focused = focused_window_for_pid(pid);
             if let Some(focused_wid) = frontmost_follow_target(
                 app.last_frontmost_pid,
@@ -451,6 +474,7 @@ fn reload_config(app: &mut App) {
     };
 
     let lookup = app_layout_lookup_with_scene(profile, app.active_scene);
+    let configured_apps = lookup.keys().cloned().collect();
     let hide_titles = hide_titles_with_scene(profile, app.active_scene);
     app.scene_labels = scene_list(profile);
     let (outer_gap, inner_gap) = effective_gaps(&config, profile);
@@ -458,6 +482,7 @@ fn reload_config(app: &mut App) {
         .reload_config(lookup, screen_rect, outer_gap, inner_gap, hide_titles);
     app.terminal = config.terminal.clone();
     app.watcher.set_ignored_apps(config.ignore.apps.clone());
+    app.watcher.set_configured_apps(configured_apps);
 
     match build_bindings(&config.hotkeys) {
         Ok(mut bindings) => {
@@ -513,8 +538,12 @@ fn accessibility_shortcuts(hotkeys: &HotkeyConfig) -> Vec<statusbar::MenuShortcu
 
 #[cfg(test)]
 mod tests {
-    use super::{accessibility_shortcuts, frontmost_follow_target, Command, HotkeyConfig};
+    use super::{
+        accessibility_shortcuts, frontmost_follow_target, should_suppress_frontmost, Command,
+        HotkeyConfig, PendingActivation,
+    };
     use std::collections::BTreeMap;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn accessibility_shortcuts_lists_only_configured_modes() {
@@ -613,5 +642,31 @@ mod tests {
         let registry_after = BTreeMap::from([(10u32, 5i32)]);
         let target = frontmost_follow_target(last_pid, 5, None, &registry_after);
         assert_eq!(target, Some(10));
+    }
+
+    #[test]
+    fn explicit_activation_suppresses_stale_frontmost_observation() {
+        let now = Instant::now();
+        let mut pending = Some(PendingActivation {
+            app_name: "Target".to_string(),
+            deadline: now + Duration::from_secs(1),
+        });
+
+        assert!(should_suppress_frontmost(&mut pending, "Source", now));
+        assert!(pending.is_some());
+        assert!(!should_suppress_frontmost(&mut pending, "Target", now));
+        assert!(pending.is_none());
+    }
+
+    #[test]
+    fn expired_activation_accepts_actual_frontmost_app() {
+        let now = Instant::now();
+        let mut pending = Some(PendingActivation {
+            app_name: "Target".to_string(),
+            deadline: now,
+        });
+
+        assert!(!should_suppress_frontmost(&mut pending, "Source", now));
+        assert!(pending.is_none());
     }
 }

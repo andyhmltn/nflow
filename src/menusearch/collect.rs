@@ -100,7 +100,7 @@ fn walk(
 mod tests {
     #[test]
     fn display_joins_path_and_title() {
-        let path = vec!["File".to_string()];
+        let path = ["File".to_string()];
         let title = "Save".to_string();
         let display = if path.is_empty() {
             title

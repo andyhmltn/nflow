@@ -141,20 +141,6 @@ impl<B: WindowBridge> SpaceManager<B> {
     }
 
     pub fn handle_window_created(&mut self, window_id: WindowId, app_name: &str, pid: i32) {
-        self.handle_window_created_with_visibility(window_id, app_name, pid, false);
-    }
-
-    pub fn handle_visible_window_created(&mut self, window_id: WindowId, app_name: &str, pid: i32) {
-        self.handle_window_created_with_visibility(window_id, app_name, pid, true);
-    }
-
-    fn handle_window_created_with_visibility(
-        &mut self,
-        window_id: WindowId,
-        app_name: &str,
-        pid: i32,
-        keep_visible: bool,
-    ) {
         self.bridge.register_window(window_id, pid);
         self.window_to_app.insert(window_id, app_name.to_string());
 
@@ -189,9 +175,27 @@ impl<B: WindowBridge> SpaceManager<B> {
 
         if target_space == self.active_space {
             self.retile_active_space();
-        } else if !keep_visible {
+        } else {
             let _ = self.bridge.hide(window_id);
         }
+    }
+
+    pub fn prepare_app_activation(&mut self, app_name: &str) -> bool {
+        let target = self
+            .window_to_app
+            .iter()
+            .find_map(|(window_id, tracked_name)| {
+                if tracked_name.eq_ignore_ascii_case(app_name) {
+                    self.window_to_space.get(window_id).copied()
+                } else {
+                    None
+                }
+            });
+        let Some(target) = target else {
+            return false;
+        };
+        self.switch_space(target);
+        true
     }
 
     pub fn handle_window_destroyed(&mut self, window_id: WindowId) {
@@ -238,12 +242,12 @@ impl<B: WindowBridge> SpaceManager<B> {
             return;
         }
 
-        self.hide_space_windows(self.active_space);
-
+        let previous = self.active_space;
         self.active_space = target;
         self.spaces.entry(target).or_default();
 
         self.retile_active_space();
+        self.hide_space_windows(previous);
     }
 
     pub fn reload_config(
@@ -554,6 +558,51 @@ mod tests {
 
         let calls = mgr.bridge.take_calls();
         assert!(!calls.iter().any(|c| matches!(c, MockCall::Focus(101))));
+    }
+
+    #[test]
+    fn app_activation_reveals_complete_target_before_hiding_source() {
+        let mut mgr = make_manager();
+        mgr.handle_window_created(100, "Zen Browser", 1);
+        mgr.handle_window_created(101, "Ghostty", 2);
+        mgr.handle_window_created(200, "Slack", 3);
+        mgr.bridge.take_calls();
+
+        assert!(mgr.prepare_app_activation("Slack"));
+        let calls = mgr.bridge.take_calls();
+        let reveal_slack = calls
+            .iter()
+            .position(|call| matches!(call, MockCall::ApplyFrame(200, _)))
+            .unwrap();
+        let hide_source = calls
+            .iter()
+            .position(|call| matches!(call, MockCall::Hide(100) | MockCall::Hide(101)))
+            .unwrap();
+        assert!(reveal_slack < hide_source);
+
+        assert!(mgr.prepare_app_activation("Ghostty"));
+        let calls = mgr.bridge.take_calls();
+        let reveal_zen = calls
+            .iter()
+            .position(|call| matches!(call, MockCall::ApplyFrame(100, _)))
+            .unwrap();
+        let reveal_ghostty = calls
+            .iter()
+            .position(|call| matches!(call, MockCall::ApplyFrame(101, _)))
+            .unwrap();
+        let hide_slack = calls
+            .iter()
+            .position(|call| matches!(call, MockCall::Hide(200)))
+            .unwrap();
+        assert!(reveal_zen < hide_slack);
+        assert!(reveal_ghostty < hide_slack);
+    }
+
+    #[test]
+    fn app_activation_ignores_untracked_app() {
+        let mut mgr = make_manager();
+        assert!(!mgr.prepare_app_activation("Firefox"));
+        assert!(mgr.bridge.take_calls().is_empty());
     }
 
     #[test]

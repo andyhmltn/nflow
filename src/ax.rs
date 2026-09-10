@@ -407,9 +407,9 @@ pub fn activate_app_by_name(name: &str) -> bool {
             let localized = localized.to_string();
             if localized == name || localized.eq_ignore_ascii_case(name) {
                 let options = NSApplicationActivationOptions::NSApplicationActivateAllWindows;
-                let _ = app.activateWithOptions(options);
-                log::info!("activated app by name: {name}");
-                return true;
+                let activated = app.activateWithOptions(options);
+                log::info!("activation requested by name: {name}, accepted={activated}");
+                return activated;
             }
         }
     }
@@ -471,12 +471,9 @@ impl MacOSBridge {
             self.app_hidden.insert(pid, hidden);
             return;
         }
-        if hidden {
-            let _ = ax_set_bool_attribute(app_element, "AXHidden", true);
-        } else if let Some(running) =
-            unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) }
-        {
-            unsafe { running.unhide() };
+        let error = ax_set_bool_attribute(app_element, "AXHidden", hidden);
+        if error != 0 {
+            log::warn!("failed to set AXHidden={hidden} for pid {pid}: AX error {error}");
         }
         self.app_hidden.insert(pid, hidden);
     }

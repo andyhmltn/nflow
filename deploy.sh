@@ -47,8 +47,16 @@ PLIST
 DEST="$HOME/Applications"
 mkdir -p "$DEST"
 echo "Installing $APP_NAME.app to $DEST"
-rm -rf "$DEST/$APP_NAME.app"
-cp -R "$APP" "$DEST/$APP_NAME.app"
+if [ -d "$DEST/$APP_NAME.app" ]; then
+    mkdir -p "$DEST/$APP_NAME.app/Contents/MacOS"
+    cp "$APP/Contents/Info.plist" "$DEST/$APP_NAME.app/Contents/Info.plist"
+    cp "$MACOS/nflow-bin" "$DEST/$APP_NAME.app/Contents/MacOS/nflow-bin.new"
+    mv -f "$DEST/$APP_NAME.app/Contents/MacOS/nflow-bin.new" "$DEST/$APP_NAME.app/Contents/MacOS/nflow-bin"
+    cp "$MACOS/$APP_NAME" "$DEST/$APP_NAME.app/Contents/MacOS/$APP_NAME.new"
+    mv -f "$DEST/$APP_NAME.app/Contents/MacOS/$APP_NAME.new" "$DEST/$APP_NAME.app/Contents/MacOS/$APP_NAME"
+else
+    cp -R "$APP" "$DEST/$APP_NAME.app"
+fi
 rm -rf "$BUILD_DIR"
 
 "$DEST/$APP_NAME.app/Contents/MacOS/nflow" enable-autostart
