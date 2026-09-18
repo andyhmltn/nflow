@@ -277,55 +277,6 @@ pub fn focused_window_for_pid(pid: i32) -> Option<WindowId> {
     }
 }
 
-fn app_has_extra_windows(app_element: AXUIElementRef, target_id: WindowId) -> bool {
-    unsafe {
-        let windows_attr = make_cf_string("AXWindows");
-        let mut windows_value: CFTypeRef = std::ptr::null();
-        let err = AXUIElementCopyAttributeValue(
-            app_element,
-            windows_attr,
-            &mut windows_value as *mut CFTypeRef,
-        );
-        CFRelease(windows_attr as CFTypeRef);
-
-        if err != 0 || windows_value.is_null() {
-            return false;
-        }
-
-        let windows_array = windows_value as core_foundation_sys::array::CFArrayRef;
-        let count = core_foundation_sys::array::CFArrayGetCount(windows_array);
-
-        let mut has_extra = false;
-        for i in 0..count {
-            let elem = core_foundation_sys::array::CFArrayGetValueAtIndex(windows_array, i)
-                as AXUIElementRef;
-            if elem.is_null() {
-                continue;
-            }
-
-            let subrole = ax_get_string_attribute(elem, "AXSubrole").unwrap_or_default();
-            if !subrole.is_empty() && subrole != "AXStandardWindow" {
-                has_extra = true;
-                break;
-            }
-
-            let mut cg_id: u32 = 0;
-            let id_err = _AXUIElementGetWindow(elem, &mut cg_id);
-            if id_err != 0 {
-                has_extra = true;
-                break;
-            }
-            if cg_id != target_id {
-                has_extra = true;
-                break;
-            }
-        }
-
-        CFRelease(windows_value);
-        has_extra
-    }
-}
-
 fn find_window_by_id(app_element: AXUIElementRef, target_id: WindowId) -> Option<AXUIElementRef> {
     unsafe {
         let windows_attr = make_cf_string("AXWindows");
@@ -506,18 +457,16 @@ impl MacOSBridge {
         }
 
         let before = ax_get_frame(window);
-        let enh_before = ax_get_bool_attribute(app_element, "AXEnhancedUserInterface");
-        let e_off = ax_set_bool_attribute(app_element, "AXEnhancedUserInterface", false);
         let e_pos1 = ax_set_position(window, frame.x, frame.y);
         let e_size = ax_set_size(window, frame.width, frame.height);
         let e_pos2 = ax_set_position(window, frame.x, frame.y);
-        let e_on = ax_set_bool_attribute(app_element, "AXEnhancedUserInterface", true);
         let after = ax_get_frame(window);
         log::info!(
-            "DIAG wid={window_id} attempt {attempts_remaining} enh_before={enh_before:?} \
+            "DIAG wid={window_id} attempt {attempts_remaining} \
              before={before:?} target={frame:?} after={after:?} \
-             err[enh_off={e_off} pos1={e_pos1} size={e_size} pos2={e_pos2} enh_on={e_on}]"
+             err[pos1={e_pos1} size={e_size} pos2={e_pos2}]"
         );
+        let _ = app_element;
 
         self.last_attempted
             .insert(window_id, (frame, attempts_remaining - 1));
@@ -531,7 +480,6 @@ impl WindowBridge for MacOSBridge {
             log::debug!("failed to create AX element for pid {pid}");
             return;
         }
-        let _ = ax_set_bool_attribute(app_element, "AXEnhancedUserInterface", true);
         log::debug!("registered app element for window {window_id}, pid {pid}");
         self.app_elements.insert(window_id, app_element);
         self.window_to_pid.insert(window_id, pid);
@@ -546,23 +494,10 @@ impl WindowBridge for MacOSBridge {
             return Ok(());
         };
 
-        if app_has_extra_windows(app_element, window_id) {
-            log::info!(
-                "apply_frame: skipping wid={window_id}, app has extra AXWindows (popup present)"
-            );
-            return Ok(());
-        }
-        if !ax_focused_matches(app_element, window_id) {
-            log::info!(
-                "apply_frame: skipping wid={window_id}, non-target focused window (sheet/dialog)"
-            );
-            return Ok(());
-        }
-
         let window = match self.get_window_element(window_id) {
             Some(w) => w,
             None => {
-                log::debug!("apply_frame: no AX window for {window_id}, skipping");
+                log::info!("apply_frame: no AX window for {window_id}, skipping");
                 return Ok(());
             }
         };
@@ -660,14 +595,14 @@ impl WindowBridge for MacOSBridge {
                      hide_titled_focused={hide_titled_focused})"
                 );
             } else {
-                self.apply_frame_to_window(app_element, primary_elem, primary_id, frame);
+                self.apply_frame_to_window(app_element,primary_elem, primary_id, frame);
 
                 let mut covered_any = false;
                 for (i, &(id, elem, hidden)) in windows.iter().enumerate() {
                     if i == primary_idx || !hidden {
                         continue;
                     }
-                    self.apply_frame_to_window(app_element, elem, id, frame);
+                    self.apply_frame_to_window(app_element,elem, id, frame);
                     covered_any = true;
                 }
 
