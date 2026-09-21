@@ -194,7 +194,7 @@ impl<B: WindowBridge> SpaceManager<B> {
         let Some(target) = target else {
             return false;
         };
-        self.switch_space(target);
+        self.switch_space_with_focus(target, true);
         true
     }
 
@@ -232,12 +232,12 @@ impl<B: WindowBridge> SpaceManager<B> {
             self.per_space_focus.insert(space_id, window_id);
             if space_id != self.active_space {
                 log::info!("focus changed to window {window_id} on space {space_id}, switching from space {}", self.active_space);
-                self.switch_space(space_id);
+                self.switch_space_with_focus(space_id, false);
             }
         }
     }
 
-    fn switch_space(&mut self, target: SpaceId) {
+    fn switch_space_with_focus(&mut self, target: SpaceId, reissue_focus: bool) {
         if target == self.active_space {
             return;
         }
@@ -247,6 +247,23 @@ impl<B: WindowBridge> SpaceManager<B> {
         self.spaces.entry(target).or_default();
 
         self.retile_active_space();
+
+        if reissue_focus {
+            let focus_target = self
+                .per_space_focus
+                .get(&target)
+                .copied()
+                .or_else(|| {
+                    self.spaces
+                        .get(&target)
+                        .and_then(|layout| layout.columns.first())
+                        .and_then(|col| col.windows.first().copied())
+                });
+            if let Some(window_id) = focus_target {
+                let _ = self.bridge.focus(window_id);
+            }
+        }
+
         self.hide_space_windows(previous);
     }
 
