@@ -124,67 +124,6 @@ const WEB_SCROLLER_ROLES: &[&str] = &["AXGroup", "AXOutline", "AXList", "AXTable
 const WEB_SCROLLER_MIN_SIZE: f64 = 100.0;
 const ELECTRON_ENABLE_DELAY: Duration = Duration::from_millis(300);
 
-struct EnhancedUiGuard {
-    app: AXUIElementRef,
-    previous: bool,
-}
-
-impl EnhancedUiGuard {
-    fn enable(app: AXUIElementRef) -> Option<Self> {
-        if app.is_null() {
-            return None;
-        }
-        let previous = read_bool_attr(app, "AXEnhancedUserInterface").unwrap_or(false);
-        if !previous {
-            set_bool_attr(app, "AXEnhancedUserInterface", true);
-        }
-        Some(Self { app, previous })
-    }
-}
-
-impl Drop for EnhancedUiGuard {
-    fn drop(&mut self) {
-        if !self.previous {
-            set_bool_attr(self.app, "AXEnhancedUserInterface", false);
-        }
-    }
-}
-
-fn read_bool_attr(element: AXUIElementRef, attribute: &str) -> Option<bool> {
-    let attr = make_cf_string(attribute);
-    if attr.is_null() {
-        return None;
-    }
-    unsafe {
-        let mut value: CFTypeRef = std::ptr::null();
-        let err = AXUIElementCopyAttributeValue(element, attr, &mut value);
-        CFRelease(attr as CFTypeRef);
-        if err != 0 || value.is_null() {
-            return None;
-        }
-        let boolean = value as core_foundation_sys::number::CFBooleanRef;
-        let out = core_foundation_sys::number::CFBooleanGetValue(boolean);
-        CFRelease(value);
-        Some(out)
-    }
-}
-
-fn set_bool_attr(element: AXUIElementRef, attribute: &str, value: bool) {
-    let attr = make_cf_string(attribute);
-    if attr.is_null() {
-        return;
-    }
-    unsafe {
-        let boolean = if value {
-            core_foundation_sys::number::kCFBooleanTrue
-        } else {
-            core_foundation_sys::number::kCFBooleanFalse
-        };
-        AXUIElementSetAttributeValue(element, attr, boolean as CFTypeRef);
-        CFRelease(attr as CFTypeRef);
-    }
-}
-
 pub struct AxElement(AXUIElementRef);
 
 unsafe impl Send for AxElement {}
@@ -945,7 +884,6 @@ impl Walker {
         unsafe {
             AXUIElementSetMessagingTimeout(app, MESSAGING_TIMEOUT);
         }
-        let _enhanced = EnhancedUiGuard::enable(app);
 
         let attr = make_cf_string("AXWindows");
         if attr.is_null() {
@@ -1070,7 +1008,6 @@ impl Walker {
         unsafe {
             AXUIElementSetMessagingTimeout(app, MESSAGING_TIMEOUT);
         }
-        let _enhanced = EnhancedUiGuard::enable(app);
 
         let attr = make_cf_string("AXFocusedWindow");
         if attr.is_null() {

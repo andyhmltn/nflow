@@ -153,6 +153,22 @@ pub fn discover_windows() -> Vec<DiscoveredWindow> {
     results
 }
 
+pub fn frontmost_window() -> Option<DiscoveredWindow> {
+    let keys = WindowKeys::new();
+    let mut frontmost = None;
+
+    iter_window_dicts(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+        |dict| {
+            if frontmost.is_none() {
+                frontmost = extract_window(dict, &keys);
+            }
+        },
+    );
+
+    frontmost
+}
+
 fn visible_window_pids() -> HashSet<i32> {
     let keys = WindowKeys::new();
     let mut pids = HashSet::new();

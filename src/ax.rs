@@ -480,6 +480,7 @@ impl WindowBridge for MacOSBridge {
             log::debug!("failed to create AX element for pid {pid}");
             return;
         }
+        let _ = ax_set_bool_attribute(app_element, "AXEnhancedUserInterface", true);
         log::debug!("registered app element for window {window_id}, pid {pid}");
         self.app_elements.insert(window_id, app_element);
         self.window_to_pid.insert(window_id, pid);
