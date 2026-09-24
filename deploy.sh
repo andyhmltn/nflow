@@ -59,8 +59,14 @@ else
 fi
 rm -rf "$BUILD_DIR"
 
+codesign -s nflow-signing --identifier com.nflow.app --force --deep \
+    "$DEST/$APP_NAME.app"
+
 "$DEST/$APP_NAME.app/Contents/MacOS/nflow" enable-autostart
 
-"$DEST/$APP_NAME.app/Contents/MacOS/nflow" restart
+UID_NUM=$(id -u)
+launchctl bootout gui/"$UID_NUM"/com.nflow 2>/dev/null || true
+launchctl bootstrap gui/"$UID_NUM" "$HOME/Library/LaunchAgents/com.nflow.plist"
+launchctl kickstart -k gui/"$UID_NUM"/com.nflow
 
 echo "Done. Launch via the 'nflow' command or $DEST/$APP_NAME.app"

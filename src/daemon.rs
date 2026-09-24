@@ -1,5 +1,3 @@
-use std::fs::OpenOptions;
-use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -37,7 +35,7 @@ fn launch_agent_plist(executable: &std::path::Path) -> String {
     let executable = xml_escape(&executable.display().to_string());
     let log = xml_escape(&log_path().display().to_string());
     format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n    <key>Label</key>\n    <string>com.nflow</string>\n    <key>ProgramArguments</key>\n    <array>\n        <string>{executable}</string>\n        <string>run</string>\n    </array>\n    <key>RunAtLoad</key>\n    <true/>\n    <key>StandardOutPath</key>\n    <string>{log}</string>\n    <key>StandardErrorPath</key>\n    <string>{log}</string>\n</dict>\n</plist>\n"
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n    <key>Label</key>\n    <string>com.nflow</string>\n    <key>ProgramArguments</key>\n    <array>\n        <string>{executable}</string>\n        <string>run</string>\n    </array>\n    <key>EnvironmentVariables</key>\n    <dict>\n        <key>__CFBundleIdentifier</key>\n        <string>com.nflow.app</string>\n    </dict>\n    <key>RunAtLoad</key>\n    <true/>\n    <key>StandardOutPath</key>\n    <string>{log}</string>\n    <key>StandardErrorPath</key>\n    <string>{log}</string>\n</dict>\n</plist>\n"
     )
 }
 
@@ -105,82 +103,49 @@ pub fn write_pid(pid: i32) -> std::io::Result<()> {
     std::fs::write(pid_path(), pid.to_string())
 }
 
+fn launchd_target() -> String {
+    let uid = unsafe { libc::getuid() };
+    format!("gui/{uid}/com.nflow")
+}
+
 pub fn start() {
-    if let Some(pid) = is_running() {
-        println!("nflow already running (pid {pid})");
-        return;
-    }
-
-    let exe = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("failed to resolve executable path: {e}");
-            std::process::exit(1);
-        }
-    };
-
     let dir = config_dir();
     if let Err(e) = std::fs::create_dir_all(&dir) {
         eprintln!("failed to create config directory: {e}");
         std::process::exit(1);
     }
 
-    let log = match OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path())
-    {
-        Ok(f) => f,
-        Err(e) => {
-            eprintln!("failed to open log file: {e}");
-            std::process::exit(1);
-        }
-    };
-    let log_err = match log.try_clone() {
-        Ok(f) => f,
-        Err(e) => {
-            eprintln!("failed to open log file: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    let mut command = Command::new(exe);
-    command
-        .arg("run")
+    let status = Command::new("launchctl")
+        .args(["kickstart", "-k", &launchd_target()])
         .stdin(Stdio::null())
-        .stdout(Stdio::from(log))
-        .stderr(Stdio::from(log_err));
+        .status();
 
-    unsafe {
-        command.pre_exec(|| {
-            libc::setsid();
-            Ok(())
-        });
-    }
-
-    match command.spawn() {
-        Ok(child) => {
-            let pid = child.id() as i32;
-            if let Err(e) = write_pid(pid) {
-                eprintln!("failed to write pid file: {e}");
-            }
-            println!("nflow started (pid {pid}) -- menu bar icon active");
+    match status {
+        Ok(s) if s.success() => {
+            println!("nflow started via launchd ({}) -- menu bar icon active", launchd_target());
+        }
+        Ok(s) => {
+            eprintln!("launchctl kickstart failed with status {s}");
+            eprintln!("ensure ~/Library/LaunchAgents/com.nflow.plist exists (run: nflow enable-autostart)");
+            std::process::exit(1);
         }
         Err(e) => {
-            eprintln!("failed to start nflow: {e}");
+            eprintln!("failed to invoke launchctl: {e}");
             std::process::exit(1);
         }
     }
 }
 
 pub fn stop() {
-    match read_pid() {
-        Some(pid) if process_alive(pid) => {
-            unsafe {
-                libc::kill(pid, libc::SIGTERM);
-            }
+    let status = Command::new("launchctl")
+        .args(["kill", "SIGTERM", &launchd_target()])
+        .stdin(Stdio::null())
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {
             let _ = std::fs::remove_file(pid_path());
-            println!("nflow stopped (pid {pid})");
+            println!("nflow stopped via launchd");
         }
         _ => {
             let _ = std::fs::remove_file(pid_path());

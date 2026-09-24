@@ -457,16 +457,18 @@ impl MacOSBridge {
         }
 
         let before = ax_get_frame(window);
+        let enh_before = ax_get_bool_attribute(app_element, "AXEnhancedUserInterface");
+        let e_off = ax_set_bool_attribute(app_element, "AXEnhancedUserInterface", false);
         let e_pos1 = ax_set_position(window, frame.x, frame.y);
         let e_size = ax_set_size(window, frame.width, frame.height);
         let e_pos2 = ax_set_position(window, frame.x, frame.y);
+        let e_on = ax_set_bool_attribute(app_element, "AXEnhancedUserInterface", true);
         let after = ax_get_frame(window);
         log::info!(
-            "DIAG wid={window_id} attempt {attempts_remaining} \
+            "DIAG wid={window_id} attempt {attempts_remaining} enh_before={enh_before:?} \
              before={before:?} target={frame:?} after={after:?} \
-             err[pos1={e_pos1} size={e_size} pos2={e_pos2}]"
+             err[enh_off={e_off} pos1={e_pos1} size={e_size} pos2={e_pos2} enh_on={e_on}]"
         );
-        let _ = app_element;
 
         self.last_attempted
             .insert(window_id, (frame, attempts_remaining - 1));
