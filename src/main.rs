@@ -357,7 +357,7 @@ fn tick(app: &Rc<RefCell<App>>) {
         app.space_manager
             .handle_window_created(win.window_id, &win.app_name, win.pid);
 
-        if frontmost_pid == Some(win.pid) && win.app_name != "Finder" {
+        if frontmost_pid == Some(win.pid) {
             app.space_manager.handle_focus_changed(win.window_id);
             app.last_frontmost_pid = Some(win.pid);
         }
@@ -366,7 +366,7 @@ fn tick(app: &Rc<RefCell<App>>) {
     if let Some((pid, name)) = frontmost {
         let suppress =
             should_suppress_frontmost(&mut app.pending_activation, &name, Instant::now());
-        if !suppress && name != "Finder" {
+        if !suppress {
             let ax_focused = focused_window_for_pid(pid);
             if let Some(focused_wid) = frontmost_follow_target(
                 app.last_frontmost_pid,
