@@ -1,4 +1,5 @@
 pub mod ax;
+pub mod border;
 pub mod config;
 pub mod daemon;
 pub mod hint;

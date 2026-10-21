@@ -181,19 +181,20 @@ impl<B: WindowBridge> SpaceManager<B> {
     }
 
     pub fn prepare_app_activation(&mut self, app_name: &str) -> bool {
-        let target = self
-            .window_to_app
-            .iter()
-            .find_map(|(window_id, tracked_name)| {
-                if tracked_name.eq_ignore_ascii_case(app_name) {
-                    self.window_to_space.get(window_id).copied()
-                } else {
-                    None
-                }
-            });
-        let Some(target) = target else {
+        let matched = self.window_to_app.iter().find_map(|(window_id, tracked_name)| {
+            if tracked_name.eq_ignore_ascii_case(app_name) {
+                self.window_to_space
+                    .get(window_id)
+                    .copied()
+                    .map(|space| (*window_id, space))
+            } else {
+                None
+            }
+        });
+        let Some((window_id, target)) = matched else {
             return false;
         };
+        self.per_space_focus.insert(target, window_id);
         self.switch_space_with_focus(target, true);
         true
     }

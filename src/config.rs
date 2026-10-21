@@ -72,6 +72,114 @@ pub struct IgnoreConfig {
     pub apps: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BorderColor {
+    pub r: f64,
+    pub g: f64,
+    pub b: f64,
+    pub a: f64,
+}
+
+impl<'de> Deserialize<'de> for BorderColor {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        parse_border_color(&s).ok_or_else(|| {
+            serde::de::Error::custom(format!(
+                "invalid border color '{s}' (expected 0xAARRGGBB or #RRGGBB)"
+            ))
+        })
+    }
+}
+
+fn parse_border_color(input: &str) -> Option<BorderColor> {
+    let trimmed = input.trim();
+    let hex = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .or_else(|| trimmed.strip_prefix('#'))
+        .unwrap_or(trimmed);
+    let (a, r, g, b) = match hex.len() {
+        8 => (
+            u8::from_str_radix(&hex[0..2], 16).ok()?,
+            u8::from_str_radix(&hex[2..4], 16).ok()?,
+            u8::from_str_radix(&hex[4..6], 16).ok()?,
+            u8::from_str_radix(&hex[6..8], 16).ok()?,
+        ),
+        6 => (
+            0xff,
+            u8::from_str_radix(&hex[0..2], 16).ok()?,
+            u8::from_str_radix(&hex[2..4], 16).ok()?,
+            u8::from_str_radix(&hex[4..6], 16).ok()?,
+        ),
+        _ => return None,
+    };
+    Some(BorderColor {
+        r: f64::from(r) / 255.0,
+        g: f64::from(g) / 255.0,
+        b: f64::from(b) / 255.0,
+        a: f64::from(a) / 255.0,
+    })
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+pub struct BorderConfig {
+    #[serde(default = "default_border_enabled")]
+    pub enabled: bool,
+    #[serde(rename = "active-color", default = "default_active_color")]
+    pub active_color: BorderColor,
+    #[serde(rename = "inactive-color", default = "default_inactive_color")]
+    pub inactive_color: BorderColor,
+    #[serde(default = "default_border_width")]
+    pub width: f64,
+    #[serde(rename = "corner-radius", default = "default_corner_radius")]
+    pub corner_radius: f64,
+}
+
+impl Default for BorderConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            active_color: default_active_color(),
+            inactive_color: default_inactive_color(),
+            width: default_border_width(),
+            corner_radius: default_corner_radius(),
+        }
+    }
+}
+
+fn default_border_enabled() -> bool {
+    true
+}
+
+fn default_border_width() -> f64 {
+    5.0
+}
+
+fn default_corner_radius() -> f64 {
+    10.0
+}
+
+fn default_active_color() -> BorderColor {
+    BorderColor {
+        r: 0xe1 as f64 / 255.0,
+        g: 0xe3 as f64 / 255.0,
+        b: 0xe4 as f64 / 255.0,
+        a: 1.0,
+    }
+}
+
+fn default_inactive_color() -> BorderColor {
+    BorderColor {
+        r: 0x49 as f64 / 255.0,
+        g: 0x4d as f64 / 255.0,
+        b: 0x64 as f64 / 255.0,
+        a: 1.0,
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct Config {
     #[serde(default)]
@@ -82,6 +190,8 @@ pub struct Config {
     pub terminal: Option<String>,
     #[serde(default)]
     pub ignore: IgnoreConfig,
+    #[serde(default)]
+    pub border: BorderConfig,
     #[serde(default)]
     #[serde(rename = "app-shortcuts")]
     pub app_shortcuts: BTreeMap<String, String>,

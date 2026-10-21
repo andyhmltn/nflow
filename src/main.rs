@@ -15,8 +15,9 @@ use objc2_foundation::MainThreadMarker;
 
 use nflow::ax::{
     activate_app_by_name, focused_window_for_pid, frontmost_app, is_accessibility_enabled,
-    MacOSBridge,
+    window_frame, MacOSBridge,
 };
+use nflow::border::BorderOverlay;
 use nflow::config::{
     app_layout_lookup_with_scene, effective_gaps, hide_titles_with_scene, parse_config_file,
     parse_config_str, scene_list, select_profile, HotkeyConfig,
@@ -83,6 +84,8 @@ struct App {
     terminal: Option<String>,
     active_scene: usize,
     scene_labels: Vec<(usize, String)>,
+    border: BorderOverlay,
+    border_focus: Option<(i32, u32)>,
 }
 
 fn config_dir() -> PathBuf {
@@ -107,6 +110,14 @@ extern "C" fn timer_callback(_timer: CFRunLoopTimerRef, info: *mut std::ffi::c_v
     let app_ptr = info as *const Rc<RefCell<App>>;
     let app = unsafe { &*app_ptr };
     tick(app);
+}
+
+extern "C" fn border_timer_callback(_timer: CFRunLoopTimerRef, info: *mut std::ffi::c_void) {
+    let app_ptr = info as *const Rc<RefCell<App>>;
+    let app = unsafe { &*app_ptr };
+    if let Ok(mut app) = app.try_borrow_mut() {
+        update_border(&mut app);
+    }
 }
 
 static TICK_TIMER: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
@@ -236,6 +247,8 @@ fn run_daemon() {
         terminal: config.terminal.clone(),
         active_scene: 0,
         scene_labels: scene_list(profile),
+        border: BorderOverlay::new(config.border),
+        border_focus: None,
     }));
 
     {
@@ -267,6 +280,26 @@ fn run_daemon() {
     let run_loop = CFRunLoop::get_current();
     unsafe {
         run_loop.add_timer(&timer, kCFRunLoopDefaultMode);
+    }
+
+    let mut border_context = CFRunLoopTimerContext {
+        version: 0,
+        info: &app as *const Rc<RefCell<App>> as *mut std::ffi::c_void,
+        retain: None,
+        release: None,
+        copyDescription: None,
+    };
+    let border_fire_date = unsafe { CFAbsoluteTimeGetCurrent() } + 0.05;
+    let border_timer = CFRunLoopTimer::new(
+        border_fire_date,
+        0.05,
+        0,
+        0,
+        border_timer_callback,
+        &mut border_context,
+    );
+    unsafe {
+        run_loop.add_timer(&border_timer, kCFRunLoopDefaultMode);
     }
     TICK_TIMER.store(timer.as_concrete_TypeRef() as *mut _, Ordering::SeqCst);
     RUN_LOOP.store(run_loop.as_concrete_TypeRef() as *mut _, Ordering::SeqCst);
@@ -390,6 +423,8 @@ fn tick(app: &Rc<RefCell<App>>) {
 
     app.space_manager.enforce_layout();
 
+    update_border(&mut app);
+
     if check_screen_changed() {
         log::info!("screen changed, reloading");
         reload_config(&mut app);
@@ -419,6 +454,20 @@ fn tick(app: &Rc<RefCell<App>>) {
         app.active_scene,
         app.scene_labels.clone(),
     );
+}
+
+fn update_border(app: &mut App) {
+    let frontmost_pid = frontmost_app().map(|(pid, _)| pid);
+    let target = frontmost_pid.and_then(|pid| focused_window_for_pid(pid).map(|wid| (pid, wid)));
+    if app.border_focus != target {
+        app.border.update(None);
+        app.border_focus = target;
+    }
+    let Some((pid, wid)) = target else {
+        return;
+    };
+    let frame = window_frame(pid, wid);
+    app.border.update(frame);
 }
 
 fn write_editor_wrapper(editor: &str, target: &Path) -> std::io::Result<PathBuf> {
@@ -482,6 +531,8 @@ fn reload_config(app: &mut App) {
     app.terminal = config.terminal.clone();
     app.watcher.set_ignored_apps(config.ignore.apps.clone());
     app.watcher.set_configured_apps(configured_apps);
+    app.border.set_config(config.border);
+    app.border_focus = None;
 
     match build_bindings(&config.hotkeys) {
         Ok(mut bindings) => {

@@ -14,6 +14,13 @@ terminal = "Ghostty"
 [ignore]
 apps = ["Raycast", "Spotlight", "Alfred", "1Password"]
 
+[border]
+enabled = true
+active-color = "0xffe1e3e4"
+inactive-color = "0xff494d64"
+width = 5.0
+corner-radius = 10.0
+
 # App shortcuts: hotkey -> app name. Pressing the hotkey activates the app if it
 # is already running, or launches it otherwise. The hotkey format matches the
 # [hotkeys] section (modifiers joined by '-', e.g. "alt-cmd-ctrl-2").

@@ -277,6 +277,21 @@ pub fn focused_window_for_pid(pid: i32) -> Option<WindowId> {
     }
 }
 
+pub fn window_frame(pid: i32, window_id: WindowId) -> Option<Rect> {
+    unsafe {
+        let app_element = AXUIElementCreateApplication(pid);
+        if app_element.is_null() {
+            return None;
+        }
+        let window = find_window_by_id(app_element, window_id);
+        CFRelease(app_element as CFTypeRef);
+        let window = window?;
+        let frame = ax_get_frame(window);
+        CFRelease(window as CFTypeRef);
+        frame
+    }
+}
+
 fn find_window_by_id(app_element: AXUIElementRef, target_id: WindowId) -> Option<AXUIElementRef> {
     unsafe {
         let windows_attr = make_cf_string("AXWindows");

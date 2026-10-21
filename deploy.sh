@@ -64,9 +64,30 @@ codesign -s nflow-signing --identifier com.nflow.app --force --deep \
 
 "$DEST/$APP_NAME.app/Contents/MacOS/nflow" enable-autostart
 
+xattr -c "$HOME/Library/LaunchAgents/com.nflow.plist" 2>/dev/null || true
+
 UID_NUM=$(id -u)
 launchctl bootout gui/"$UID_NUM"/com.nflow 2>/dev/null || true
-launchctl bootstrap gui/"$UID_NUM" "$HOME/Library/LaunchAgents/com.nflow.plist"
+waited=0
+while launchctl print gui/"$UID_NUM"/com.nflow >/dev/null 2>&1; do
+    sleep 0.2
+    waited=$((waited + 1))
+    if [ "$waited" -gt 25 ]; then
+        break
+    fi
+done
+attempt=1
+while [ "$attempt" -le 5 ]; do
+    if launchctl bootstrap gui/"$UID_NUM" "$HOME/Library/LaunchAgents/com.nflow.plist" 2>/dev/null; then
+        break
+    fi
+    if [ "$attempt" = 5 ]; then
+        launchctl bootstrap gui/"$UID_NUM" "$HOME/Library/LaunchAgents/com.nflow.plist"
+        exit 1
+    fi
+    sleep 0.5
+    attempt=$((attempt + 1))
+done
 launchctl kickstart -k gui/"$UID_NUM"/com.nflow
 
 echo "Done. Launch via the 'nflow' command or $DEST/$APP_NAME.app"

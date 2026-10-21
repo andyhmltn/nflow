@@ -35,7 +35,7 @@ impl LabelAllocator {
 
     fn expand(&mut self) {
         let prefixes: Vec<String> = self.free.drain(..).collect();
-        for c in ALPHABET {
+        for c in ALPHABET.iter().rev() {
             for prefix in &prefixes {
                 self.free.push_back(format!("{prefix}{c}"));
             }
@@ -156,6 +156,18 @@ mod tests {
                 pair[1]
             );
         }
+    }
+
+    #[test]
+    fn deep_labels_do_not_stack_hard_letters() {
+        let mut alloc = LabelAllocator::new();
+        let labels: Vec<String> = (0..800).map(|_| alloc.allocate()).collect();
+        let deepest = labels.iter().max_by_key(|l| l.chars().count()).unwrap();
+        let z_count = deepest.chars().filter(|c| *c == 'z').count();
+        assert!(
+            z_count <= 1,
+            "deep label {deepest} contains {z_count} 'z' chars; expected at most 1"
+        );
     }
 
     #[test]
