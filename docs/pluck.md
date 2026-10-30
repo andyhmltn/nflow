@@ -24,7 +24,7 @@ On a web page a single sentence is usually split across several accessibility el
 
 Here "Patty" and "Hamburger (disambiguation)" are links, each its own `AXLink` element, and the surrounding prose is `AXStaticText`. Reading each element's `AXValue` in isolation yields fragments and loses the link URLs.
 
-Pluck records each text and link piece with its screen frame and window id, then groups pieces that share a window and overlap vertically (by at least half the smaller piece's height) into a single reconstructed line, breaking on a new visual row or a large horizontal gap. Pieces are joined left-to-right with a space inserted only when they don't already touch and the next piece doesn't start with punctuation, so `Patty` + `.` reads as `Patty.`. The reconstructed line carries both its plain text and, separately, a markdown rendering where link pieces become `[text](url)` -- which is what `ctrl-m` copies.
+Pluck records each text and link piece with its screen frame and window id, removes duplicate overlapping accessibility nodes with the same text, then groups pieces that share a window and overlap vertically (by at least half the smaller piece's height) into a single reconstructed line, breaking on a new visual row or a large horizontal gap. Pieces are joined left-to-right with a space inserted only when they don't already touch and the next piece doesn't start with punctuation, so `Patty` + `.` reads as `Patty.`. The reconstructed line carries both its plain text and, separately, a markdown rendering where link pieces become `[text](url)` -- which is what `ctrl-m` copies.
 
 Line reconstruction is per-window, so text from adjacent tiled nflow windows never merges into one line.
 

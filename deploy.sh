@@ -1,12 +1,19 @@
 #!/bin/sh
 set -e
 
+APP_NAME="nflow"
+BUNDLE_ID="com.nflow.app"
+SIGN_IDENTITY="nflow-signing"
+DEST="$HOME/Applications"
+PLIST="$HOME/Library/LaunchAgents/com.nflow.plist"
+UID_NUM=$(id -u)
+
 cargo build --release
 cargo install --path .
 
-APP_NAME="nflow"
-BUILD_DIR="$(mktemp -d)"
-APP="$BUILD_DIR/$APP_NAME.app"
+STAGING="$(mktemp -d)"
+trap 'rm -rf "$STAGING"' EXIT
+APP="$STAGING/$APP_NAME.app"
 MACOS="$APP/Contents/MacOS"
 
 mkdir -p "$MACOS"
@@ -21,17 +28,17 @@ exec "$(dirname "$0")/nflow-bin" "$@"
 STUB
 chmod +x "$MACOS/$APP_NAME" "$MACOS/nflow-bin"
 
-cat > "$APP/Contents/Info.plist" <<'PLIST'
+cat > "$APP/Contents/Info.plist" <<PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>nflow</string>
+    <string>$APP_NAME</string>
     <key>CFBundleIdentifier</key>
-    <string>com.nflow.app</string>
+    <string>$BUNDLE_ID</string>
     <key>CFBundleName</key>
-    <string>nflow</string>
+    <string>$APP_NAME</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -42,47 +49,66 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <true/>
 </dict>
 </plist>
-PLIST
+PLIST_EOF
 
-DEST="$HOME/Applications"
-mkdir -p "$DEST"
-echo "Installing $APP_NAME.app to $DEST"
+codesign --force --options runtime --timestamp=none \
+    --identifier "$BUNDLE_ID" -s "$SIGN_IDENTITY" \
+    "$MACOS/nflow-bin"
+codesign --force --options runtime --timestamp=none \
+    --identifier "$BUNDLE_ID" -s "$SIGN_IDENTITY" \
+    "$APP"
+codesign --verify --strict "$APP"
+
+NEW_LEAF=$(codesign -d -r- "$MACOS/nflow-bin" 2>&1 | awk -F'H"' '/certificate leaf/ {print $2}' | tr -d '"')
 if [ -d "$DEST/$APP_NAME.app" ]; then
-    mkdir -p "$DEST/$APP_NAME.app/Contents/MacOS"
-    cp "$APP/Contents/Info.plist" "$DEST/$APP_NAME.app/Contents/Info.plist"
-    cp "$MACOS/nflow-bin" "$DEST/$APP_NAME.app/Contents/MacOS/nflow-bin.new"
-    mv -f "$DEST/$APP_NAME.app/Contents/MacOS/nflow-bin.new" "$DEST/$APP_NAME.app/Contents/MacOS/nflow-bin"
-    cp "$MACOS/$APP_NAME" "$DEST/$APP_NAME.app/Contents/MacOS/$APP_NAME.new"
-    mv -f "$DEST/$APP_NAME.app/Contents/MacOS/$APP_NAME.new" "$DEST/$APP_NAME.app/Contents/MacOS/$APP_NAME"
-else
-    cp -R "$APP" "$DEST/$APP_NAME.app"
+    OLD_LEAF=$(codesign -d -r- "$DEST/$APP_NAME.app/Contents/MacOS/nflow-bin" 2>&1 | awk -F'H"' '/certificate leaf/ {print $2}' | tr -d '"' || true)
+    if [ -n "$OLD_LEAF" ] && [ "$OLD_LEAF" != "$NEW_LEAF" ]; then
+        echo "ERROR: signing cert leaf changed ($OLD_LEAF -> $NEW_LEAF)" >&2
+        echo "       installing would void existing TCC grants. Aborting." >&2
+        exit 1
+    fi
 fi
-rm -rf "$BUILD_DIR"
 
-codesign -s nflow-signing --identifier com.nflow.app --force --deep \
-    "$DEST/$APP_NAME.app"
-
-"$DEST/$APP_NAME.app/Contents/MacOS/nflow" enable-autostart
-
-xattr -c "$HOME/Library/LaunchAgents/com.nflow.plist" 2>/dev/null || true
-
-UID_NUM=$(id -u)
+echo "Stopping existing nflow agent"
 launchctl bootout gui/"$UID_NUM"/com.nflow 2>/dev/null || true
 waited=0
 while launchctl print gui/"$UID_NUM"/com.nflow >/dev/null 2>&1; do
     sleep 0.2
     waited=$((waited + 1))
-    if [ "$waited" -gt 25 ]; then
-        break
+    if [ "$waited" -gt 50 ]; then
+        echo "ERROR: agent did not stop after 10s" >&2
+        exit 1
     fi
 done
+pkill -x nflow-bin 2>/dev/null || true
+sleep 0.3
+
+echo "Installing $APP_NAME.app to $DEST"
+mkdir -p "$DEST"
+STAGING_PARENT="$DEST/.$APP_NAME.app.staging.$$"
+cp -R "$APP" "$STAGING_PARENT"
+if [ -d "$DEST/$APP_NAME.app" ]; then
+    BACKUP="$DEST/.$APP_NAME.app.old.$$"
+    mv "$DEST/$APP_NAME.app" "$BACKUP"
+    mv "$STAGING_PARENT" "$DEST/$APP_NAME.app"
+    rm -rf "$BACKUP"
+else
+    mv "$STAGING_PARENT" "$DEST/$APP_NAME.app"
+fi
+
+codesign --verify --strict "$DEST/$APP_NAME.app"
+
+"$DEST/$APP_NAME.app/Contents/MacOS/nflow-bin" enable-autostart
+
+xattr -c "$PLIST" 2>/dev/null || true
+
 attempt=1
 while [ "$attempt" -le 5 ]; do
-    if launchctl bootstrap gui/"$UID_NUM" "$HOME/Library/LaunchAgents/com.nflow.plist" 2>/dev/null; then
+    if launchctl bootstrap gui/"$UID_NUM" "$PLIST" 2>/dev/null; then
         break
     fi
     if [ "$attempt" = 5 ]; then
-        launchctl bootstrap gui/"$UID_NUM" "$HOME/Library/LaunchAgents/com.nflow.plist"
+        launchctl bootstrap gui/"$UID_NUM" "$PLIST"
         exit 1
     fi
     sleep 0.5

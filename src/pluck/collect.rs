@@ -158,6 +158,7 @@ fn is_link_element(element: &AxElement) -> bool {
 }
 
 pub fn reconstruct_lines(pieces: Vec<Piece>) -> Vec<Line> {
+    let pieces = deduplicate_pieces(pieces);
     if pieces.is_empty() {
         return Vec::new();
     }
@@ -212,6 +213,30 @@ pub fn reconstruct_lines(pieces: Vec<Piece>) -> Vec<Line> {
     lines
 }
 
+fn deduplicate_pieces(pieces: Vec<Piece>) -> Vec<Piece> {
+    let mut unique = Vec::new();
+    for piece in pieces {
+        if let Some(existing) = unique.iter_mut().find(|existing: &&mut Piece| {
+            existing.window_id == piece.window_id
+                && existing.text == piece.text
+                && frames_overlap(&existing.frame, &piece.frame)
+        }) {
+            if existing.url.is_none() && piece.url.is_some() {
+                existing.url = piece.url;
+            }
+        } else {
+            unique.push(piece);
+        }
+    }
+    unique
+}
+
+fn frames_overlap(a: &Rect, b: &Rect) -> bool {
+    let horizontal_overlap = (a.x + a.width).min(b.x + b.width) - a.x.max(b.x);
+    let vertical_overlap = (a.y + a.height).min(b.y + b.height) - a.y.max(b.y);
+    horizontal_overlap > 0.0 && vertical_overlap > 0.0
+}
+
 fn v_overlap(a: &Rect, b: &Rect) -> bool {
     let a_top = a.y;
     let a_bottom = a.y + a.height;
@@ -258,18 +283,25 @@ pub fn extract(lines: &[Line], mode: Mode) -> Vec<Candidate> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for line in lines.iter().rev() {
-        for token in tokenize(&line.plain, mode) {
-            if token.len() < MIN_TOKEN_LEN || !seen.insert(token.clone()) {
-                continue;
+        let mut append_candidates = |value: &str, markdown: Option<String>| {
+            for token in tokenize(value, mode) {
+                if token.len() < MIN_TOKEN_LEN || !seen.insert(token.clone()) {
+                    continue;
+                }
+                out.push(Candidate {
+                    display: token,
+                    markdown: markdown.clone(),
+                });
             }
-            let markdown = match mode {
-                Mode::Lines => line.markdown(),
-                Mode::Words => None,
-            };
-            out.push(Candidate {
-                display: token,
-                markdown,
-            });
+        };
+        match mode {
+            Mode::Words => {
+                for piece in &line.pieces {
+                    append_candidates(&piece.text, None);
+                }
+                append_candidates(&line.plain, None);
+            }
+            Mode::Lines => append_candidates(&line.plain, line.markdown()),
         }
     }
     out
@@ -290,6 +322,9 @@ fn tokenize(value: &str, mode: Mode) -> Vec<String> {
                 tokens.extend(token_variants(token));
             }
             tokens.extend(word_slices(value).into_iter().map(str::to_owned));
+            for segment in delimited_segments(value) {
+                tokens.extend(word_slices(segment).into_iter().map(str::to_owned));
+            }
             tokens
         }
         Mode::Lines => value.lines().map(|l| l.trim().to_owned()).collect(),
@@ -375,54 +410,65 @@ fn token_variants(token: &str) -> Vec<String> {
 
 fn word_slices(line: &str) -> Vec<&str> {
     let mut slices = Vec::new();
-    let mut sentence_start = 0;
-    let mut whitespace_start = None;
-    let mut between_sentences = false;
-
-    for (index, c) in line.char_indices() {
-        if between_sentences {
-            if !c.is_whitespace() {
-                sentence_start = index;
-                whitespace_start = None;
-                between_sentences = false;
-            }
-            continue;
-        }
-
-        if c.is_whitespace() {
-            match whitespace_start {
-                Some(start) => {
-                    append_word_slices(&mut slices, &line[sentence_start..start]);
-                    between_sentences = true;
-                }
-                None if c == ' ' => whitespace_start = Some(index),
-                None => {
-                    append_word_slices(&mut slices, &line[sentence_start..index]);
-                    between_sentences = true;
-                }
-            }
-        } else {
-            whitespace_start = None;
-        }
-    }
-
-    if !between_sentences {
-        append_word_slices(&mut slices, &line[sentence_start..]);
-    }
-
-    slices
-}
-
-fn append_word_slices<'a>(slices: &mut Vec<&'a str>, sentence: &'a str) {
     let mut at_word_start = true;
-    for (index, c) in sentence.char_indices() {
-        if c == ' ' {
+    for (index, c) in line.char_indices() {
+        if c.is_whitespace() {
             at_word_start = true;
         } else if at_word_start {
-            slices.push(sentence[index..].trim_end());
+            slices.push(line[index..].trim_end());
             at_word_start = false;
         }
     }
+    slices
+}
+
+fn delimited_segments(line: &str) -> Vec<&str> {
+    let mut segments = Vec::new();
+    let mut delimiters: Vec<(char, usize)> = Vec::new();
+    for (index, c) in line.char_indices() {
+        if is_opening_delimiter(c) {
+            if delimiters
+                .last()
+                .is_some_and(|(opening, _)| *opening == c && is_quote(c))
+            {
+                let (_, start) = delimiters.pop().unwrap();
+                if start < index {
+                    segments.push(&line[start..index]);
+                }
+            } else {
+                delimiters.push((c, index + c.len_utf8()));
+            }
+        } else if let Some(opening) = matching_opening_delimiter(c) {
+            if delimiters
+                .last()
+                .is_some_and(|(current, _)| *current == opening)
+            {
+                let (_, start) = delimiters.pop().unwrap();
+                if start < index {
+                    segments.push(&line[start..index]);
+                }
+            }
+        }
+    }
+    segments
+}
+
+fn is_opening_delimiter(c: char) -> bool {
+    matches!(c, '(' | '[' | '{' | '<') || is_quote(c)
+}
+
+fn matching_opening_delimiter(c: char) -> Option<char> {
+    match c {
+        ')' => Some('('),
+        ']' => Some('['),
+        '}' => Some('{'),
+        '>' => Some('<'),
+        _ => None,
+    }
+}
+
+fn is_quote(c: char) -> bool {
+    matches!(c, '\'' | '"' | '`')
 }
 
 #[cfg(test)]
@@ -526,6 +572,25 @@ mod tests {
     }
 
     #[test]
+    fn reconstruct_deduplicates_overlapping_accessibility_nodes() {
+        let pieces = vec![
+            piece("ph-autogen-ai", 10.0, 100.0, 100.0, 20.0, None),
+            piece(
+                "ph-autogen-ai",
+                20.0,
+                102.0,
+                60.0,
+                16.0,
+                Some("https://github.com/ph-autogen-ai"),
+            ),
+        ];
+        let lines = reconstruct_lines(pieces);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].plain, "ph-autogen-ai");
+        assert!(lines[0].markdown().is_some());
+    }
+
+    #[test]
     fn markdown_none_when_no_links() {
         let l = line(
             "plain text",
@@ -549,6 +614,28 @@ mod tests {
         assert!(extract(&lines, Mode::Words)
             .iter()
             .all(|c| c.markdown.is_none()));
+    }
+
+    #[test]
+    fn words_extract_inline_code_piece_before_its_surrounding_prose() {
+        let pieces = vec![
+            piece("./migrate.sh reset --force", 0.0, 0.0, 180.0, 20.0, None),
+            piece(" from the BACKEND directory", 182.0, 0.0, 180.0, 20.0, None),
+        ];
+        let lines = reconstruct_lines(pieces);
+        let out: Vec<String> = extract(&lines, Mode::Words)
+            .into_iter()
+            .map(|candidate| candidate.display)
+            .collect();
+        let code = "./migrate.sh reset --force";
+        let full_line = "./migrate.sh reset --force from the BACKEND directory";
+
+        assert!(out.contains(&code.to_string()));
+        assert!(out.contains(&full_line.to_string()));
+        assert!(
+            out.iter().position(|candidate| candidate == code)
+                < out.iter().position(|candidate| candidate == full_line)
+        );
     }
 
     #[test]
@@ -591,11 +678,33 @@ mod tests {
     }
 
     #[test]
-    fn sentence_slices_stop_at_column_whitespace() {
+    fn word_slices_match_the_tmux_picker_algorithm() {
         assert_eq!(
             word_slices("alpha bravo  charlie\tdelta echo"),
-            vec!["alpha bravo", "bravo", "charlie", "delta echo", "echo"]
+            vec![
+                "alpha bravo  charlie\tdelta echo",
+                "bravo  charlie\tdelta echo",
+                "charlie\tdelta echo",
+                "delta echo",
+                "echo"
+            ]
         );
+    }
+
+    #[test]
+    fn words_include_delimiter_bounded_slices() {
+        let lines = vec![line(
+            "command [review owner] `ph-autogen-ai` \"quoted value\"",
+            vec![],
+        )];
+        let out: Vec<String> = extract(&lines, Mode::Words)
+            .into_iter()
+            .map(|candidate| candidate.display)
+            .collect();
+
+        assert!(out.contains(&"review owner".to_string()));
+        assert!(out.contains(&"ph-autogen-ai".to_string()));
+        assert!(out.contains(&"quoted value".to_string()));
     }
 
     #[test]
