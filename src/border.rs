@@ -4,7 +4,7 @@ use core_graphics::display::CGDisplay;
 use objc2::rc::Retained;
 use objc2::{declare_class, msg_send_id, mutability, ClassType, DeclaredClass};
 use objc2_app_kit::{
-    NSBackingStoreType, NSBezierPath, NSColor, NSStatusWindowLevel, NSView, NSWindow,
+    NSBackingStoreType, NSBezierPath, NSColor, NSFloatingWindowLevel, NSView, NSWindow,
     NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_foundation::{MainThreadMarker, NSObjectProtocol, NSPoint, NSRect, NSSize};
@@ -135,7 +135,7 @@ impl BorderOverlay {
             window.setOpaque(false);
             window.setBackgroundColor(Some(&NSColor::clearColor()));
             window.setIgnoresMouseEvents(true);
-            window.setLevel(NSStatusWindowLevel);
+            window.setLevel(NSFloatingWindowLevel);
             window.setCollectionBehavior(NSWindowCollectionBehavior::CanJoinAllSpaces);
             window.setContentView(Some(&view));
             window.setHasShadow(false);
