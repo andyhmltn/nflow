@@ -16,7 +16,7 @@ use crate::types::Rect;
 const PROMPT_LABEL_X: f64 = 24.0;
 const PROMPT_LABEL_Y: f64 = 24.0;
 const LINE_STEP: i32 = 80;
-const HELD_STEP: i32 = 14;
+const HELD_STEP: i32 = 24;
 const JUMP_PENDING: i32 = 30000;
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);

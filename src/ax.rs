@@ -336,6 +336,18 @@ pub fn is_accessibility_enabled() -> bool {
     unsafe { AXIsProcessTrusted() }
 }
 
+#[link(name = "IOKit", kind = "framework")]
+extern "C" {
+    fn IOHIDCheckAccess(request_type: u32) -> u32;
+}
+
+const K_IO_HID_REQUEST_TYPE_LISTEN_EVENT: u32 = 1;
+const K_IO_HID_ACCESS_TYPE_GRANTED: u32 = 0;
+
+pub fn is_input_monitoring_enabled() -> bool {
+    unsafe { IOHIDCheckAccess(K_IO_HID_REQUEST_TYPE_LISTEN_EVENT) == K_IO_HID_ACCESS_TYPE_GRANTED }
+}
+
 pub fn frontmost_app() -> Option<(i32, String)> {
     unsafe {
         let app = NSWorkspace::sharedWorkspace().frontmostApplication()?;
@@ -613,14 +625,14 @@ impl WindowBridge for MacOSBridge {
                      hide_titled_focused={hide_titled_focused})"
                 );
             } else {
-                self.apply_frame_to_window(app_element,primary_elem, primary_id, frame);
+                self.apply_frame_to_window(app_element, primary_elem, primary_id, frame);
 
                 let mut covered_any = false;
                 for (i, &(id, elem, hidden)) in windows.iter().enumerate() {
                     if i == primary_idx || !hidden {
                         continue;
                     }
-                    self.apply_frame_to_window(app_element,elem, id, frame);
+                    self.apply_frame_to_window(app_element, elem, id, frame);
                     covered_any = true;
                 }
 

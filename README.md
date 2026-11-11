@@ -128,6 +128,7 @@ text-select           = "cmd-shift-y"
 scroll-mode           = "cmd-shift-i"
 menu-search           = "alt-cmd-shift-p"
 pluck                 = "alt-cmd-shift-o"
+focus-window          = "alt-cmd-shift-z"
 apply-scene           = "alt-ctrl-{n}"
 
 terminal = "Ghostty"
@@ -241,6 +242,7 @@ Modifiers: `alt`/`option`, `shift`, `ctrl`/`control`, `cmd`/`command`. Patterns:
 | scroll-mode           | `cmd-shift-i`         | Label every scroll area in the focused window; type the label, then scroll it with Vim keys (Esc cancels) |
 | menu-search           | `alt-cmd-shift-p`     | Fuzzy command palette over the frontmost app's menu bar; search or type a hint code to fire a menu item (Esc cancels) |
 | pluck                 | `alt-cmd-shift-o`     | Fuzzy-find any visible text on screen; copy the highlighted token (or marked tokens) to the clipboard, plain or as markdown with links (Esc cancels) |
+| focus-window          | `alt-cmd-shift-z`     | Toggle zoom on the focused window: it fills its space and the other apps in that space are hidden. Press again, or focus another window in the space, to restore the tiled layout |
 | apply-scene           | `alt-ctrl-1` ...      | Switch the active profile to scene N (`alt-ctrl-0` restores the default) |
 
 ### Gaps
@@ -261,7 +263,7 @@ Top-level `terminal` is the app name nflow opens `$EDITOR` in when you pick "Ope
 - Layouts are columns of stacked windows. A configured app inserts at its `apps`-array index regardless of spawn order; an unconfigured app appends.
 - Column widths come from `weights` in config (default 1.0 each). Width is distributed proportionally over the usable area.
 - Windows on inactive spaces are hidden via `AXHidden` on the app element.
-- Frontmost-app changes (via Cmd-Tab, Dock click, Spotlight) auto-switch to that app's space. This is the only navigation model; there are no manual focus/move/switch hotkeys.
+- Frontmost-app changes (via Cmd-Tab, Dock click, Spotlight) auto-switch to that app's space. This is the only navigation model; there are no manual move/switch hotkeys. `focus-window` zooms the focused window to fill its space, like tmux `prefix z`.
 - Layouts are re-enforced every tick because some apps (terminal emulators, browsers, Slack) restore their old size after being resized. Each window has a small retry budget per requested frame; once exhausted nflow accepts the drift to avoid fighting hard caps.
 
 `docs/LESSONS.md` collects the macOS quirks that shaped these choices: AXUIElement lifetime, position-then-size-then-position ordering, `_AXUIElementGetWindow`, Carbon's silent hotkey conflicts, and so on. Worth reading if you plan to hack on the code.

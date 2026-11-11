@@ -9,7 +9,6 @@ PLIST="$HOME/Library/LaunchAgents/com.nflow.plist"
 UID_NUM=$(id -u)
 
 cargo build --release
-cargo install --path .
 
 STAGING="$(mktemp -d)"
 trap 'rm -rf "$STAGING"' EXIT

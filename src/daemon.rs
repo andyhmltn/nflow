@@ -1,3 +1,4 @@
+use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -103,6 +104,28 @@ pub fn write_pid(pid: i32) -> std::io::Result<()> {
     std::fs::write(pid_path(), pid.to_string())
 }
 
+pub struct SingletonLock {
+    _file: std::fs::File,
+}
+
+pub fn acquire_singleton_lock() -> std::io::Result<SingletonLock> {
+    let dir = config_dir();
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("nflow.lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&path)?;
+    let fd = file.as_raw_fd();
+    let rc = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(SingletonLock { _file: file })
+}
+
 fn launchd_target() -> String {
     let uid = unsafe { libc::getuid() };
     format!("gui/{uid}/com.nflow")
@@ -122,7 +145,10 @@ pub fn start() {
 
     match status {
         Ok(s) if s.success() => {
-            println!("nflow started via launchd ({}) -- menu bar icon active", launchd_target());
+            println!(
+                "nflow started via launchd ({}) -- menu bar icon active",
+                launchd_target()
+            );
         }
         Ok(s) => {
             eprintln!("launchctl kickstart failed with status {s}");

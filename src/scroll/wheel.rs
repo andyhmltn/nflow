@@ -57,8 +57,9 @@ pub fn scroll_by(dx: i32, dy: i32) {
     }
 }
 
-const FRAME: Duration = Duration::from_millis(12);
-const MAX_PENDING_STEP: i32 = 110;
+const FRAME: Duration = Duration::from_millis(8);
+const MAX_PENDING_STEP: i32 = 220;
+const MIN_PENDING_STEP: i32 = 6;
 
 static VEL_X: AtomicI32 = AtomicI32::new(0);
 static VEL_Y: AtomicI32 = AtomicI32::new(0);
@@ -84,11 +85,15 @@ fn drain(pending: &AtomicI32) -> i32 {
     if remaining == 0 {
         return 0;
     }
-    let mut step = remaining / 3;
-    if step == 0 {
-        step = remaining;
+    let magnitude = remaining.abs();
+    let mut step_mag = (magnitude * 2) / 5;
+    if step_mag < MIN_PENDING_STEP {
+        step_mag = magnitude.min(MIN_PENDING_STEP);
     }
-    step = step.clamp(-MAX_PENDING_STEP, MAX_PENDING_STEP);
+    if step_mag > MAX_PENDING_STEP {
+        step_mag = MAX_PENDING_STEP;
+    }
+    let step = step_mag * remaining.signum();
     pending.fetch_sub(step, Ordering::SeqCst);
     step
 }

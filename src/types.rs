@@ -101,6 +101,7 @@ pub enum Command {
     MenuSearch,
     Pluck,
     Warp,
+    FocusWindow,
     ActivateApp(String),
 }
 

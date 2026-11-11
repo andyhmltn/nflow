@@ -15,7 +15,7 @@ use objc2_foundation::MainThreadMarker;
 
 use nflow::ax::{
     activate_app_by_name, focused_window_for_pid, frontmost_app, is_accessibility_enabled,
-    window_frame, MacOSBridge,
+    is_input_monitoring_enabled, window_frame, MacOSBridge,
 };
 use nflow::border::BorderOverlay;
 use nflow::config::{
@@ -165,12 +165,18 @@ fn run_daemon() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     log::info!("nflow starting");
 
-    if let Some(pid) = daemon::is_running() {
-        if pid != std::process::id() as i32 {
-            eprintln!("nflow is already running (pid {pid})");
+    let _singleton = match daemon::acquire_singleton_lock() {
+        Ok(lock) => lock,
+        Err(e) => {
+            let other = daemon::is_running()
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "<unknown>".into());
+            eprintln!(
+                "nflow is already running (pid {other}); refusing to start duplicate (flock: {e})"
+            );
             std::process::exit(1);
         }
-    }
+    };
     if let Err(e) = daemon::write_pid(std::process::id() as i32) {
         log::warn!("failed to write pid file: {e}");
     }
@@ -179,6 +185,20 @@ fn run_daemon() {
         eprintln!("nflow requires accessibility permission.");
         eprintln!("Grant access in System Settings > Privacy & Security > Accessibility");
         std::process::exit(1);
+    }
+
+    if !is_input_monitoring_enabled() {
+        let exe = std::env::current_exe()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "<unknown binary>".to_string());
+        log::error!(
+            "nflow is missing Input Monitoring permission. CGEventTap will install but \
+             receive zero events. Grant Input Monitoring to this binary: {exe}"
+        );
+        eprintln!("nflow is missing Input Monitoring permission.");
+        eprintln!(
+            "Grant access in System Settings > Privacy & Security > Input Monitoring for: {exe}"
+        );
     }
 
     let dir = config_dir();
@@ -356,6 +376,7 @@ fn tick(app: &Rc<RefCell<App>>) {
             | Command::Pluck => {
                 nflow::hotkey::run_mode_command(&cmd);
             }
+            Command::FocusWindow => toggle_focused_window(&mut app),
             Command::ActivateApp(name) if activate_app_by_name(&name) => {
                 let prepared = app.space_manager.prepare_app_activation(&name);
                 if prepared {
@@ -454,6 +475,18 @@ fn tick(app: &Rc<RefCell<App>>) {
         app.active_scene,
         app.scene_labels.clone(),
     );
+}
+
+fn toggle_focused_window(app: &mut App) {
+    let Some((pid, name)) = frontmost_app() else {
+        return;
+    };
+    let target =
+        frontmost_follow_target(None, pid, focused_window_for_pid(pid), &app.bridge_registry);
+    match target {
+        Some(window_id) if app.space_manager.toggle_zoom(window_id) => {}
+        _ => log::info!("focus-window: no tracked window for frontmost app {name}"),
+    }
 }
 
 fn update_border(app: &mut App) {

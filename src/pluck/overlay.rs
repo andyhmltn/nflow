@@ -42,13 +42,18 @@ pub struct PluckSnapshot {
 }
 
 const FONT_SIZE: f64 = 14.0;
-const ROW_HEIGHT: f64 = 26.0;
+const HINT_SIZE: f64 = 11.0;
+const ROW_HEIGHT: f64 = 32.0;
 const PROMPT_HEIGHT: f64 = 38.0;
-const FOOTER_HEIGHT: f64 = 24.0;
-const PADDING: f64 = 14.0;
-const PANEL_WIDTH: f64 = 640.0;
-const PANEL_CORNER: f64 = 10.0;
+const FOOTER_HEIGHT: f64 = 30.0;
+const PAD_X: f64 = 22.0;
+const PAD_TOP: f64 = 18.0;
+const PAD_BOTTOM: f64 = 14.0;
+const SECTION_GAP: f64 = 8.0;
+const PANEL_WIDTH: f64 = 560.0;
+const PANEL_CORNER: f64 = 14.0;
 const MARK_WIDTH: f64 = 20.0;
+const SELECT_BAR_WIDTH: f64 = 2.5;
 
 fn to_any<T: ClassType<Super = NSObject> + 'static>(value: Retained<T>) -> Retained<AnyObject> {
     let object = Retained::into_super(value);
@@ -113,8 +118,13 @@ impl PluckOverlayView {
 
         let panel_width = PANEL_WIDTH.min(screen.width - 80.0).max(320.0);
         let row_count = state.rows.len();
-        let panel_height =
-            PADDING * 2.0 + PROMPT_HEIGHT + row_count as f64 * ROW_HEIGHT + FOOTER_HEIGHT + 4.0;
+        let panel_height = PAD_TOP
+            + PROMPT_HEIGHT
+            + SECTION_GAP
+            + row_count as f64 * ROW_HEIGHT
+            + SECTION_GAP
+            + FOOTER_HEIGHT
+            + PAD_BOTTOM;
         let panel_x = (screen.width - panel_width) / 2.0;
         let panel_y = (screen.height - panel_height) / 2.0;
         let panel_rect = NSRect::new(
@@ -122,8 +132,8 @@ impl PluckOverlayView {
             NSSize::new(panel_width, panel_height),
         );
 
-        let bg = unsafe { NSColor::colorWithSRGBRed_green_blue_alpha(0.07, 0.08, 0.11, 0.96) };
-        let border = unsafe { NSColor::colorWithSRGBRed_green_blue_alpha(0.35, 0.40, 0.50, 0.55) };
+        let bg = unsafe { srgb(0x16, 0x16, 0x16, 0.98) };
+        let border = unsafe { srgb(0x26, 0x26, 0x26, 1.0) };
         unsafe {
             let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(
                 panel_rect,
@@ -137,40 +147,46 @@ impl PluckOverlayView {
             path.stroke();
         }
 
-        let bright = unsafe { NSColor::colorWithSRGBRed_green_blue_alpha(0.96, 0.97, 1.0, 1.0) };
-        let dim = unsafe { NSColor::colorWithSRGBRed_green_blue_alpha(0.45, 0.48, 0.55, 1.0) };
-        let accent = unsafe { NSColor::colorWithSRGBRed_green_blue_alpha(0.40, 0.80, 1.0, 1.0) };
+        let hint_font = unsafe { NSFont::monospacedSystemFontOfSize_weight(HINT_SIZE, 0.0) };
+
+        let fg = unsafe { srgb(0xf2, 0xf4, 0xf8, 1.0) };
+        let fg_dim = unsafe { srgb(0x9a, 0x9a, 0x9a, 1.0) };
+        let fg_muted = unsafe { srgb(0x6f, 0x6f, 0x6f, 1.0) };
         let keys = [unsafe { NSFontAttributeName }, unsafe {
             NSForegroundColorAttributeName
         }];
-        let bright_attrs =
-            NSDictionary::from_vec(&keys, vec![to_any(font.clone()), to_any(bright.clone())]);
+        let fg_attrs =
+            NSDictionary::from_vec(&keys, vec![to_any(font.clone()), to_any(fg.clone())]);
         let dim_attrs =
-            NSDictionary::from_vec(&keys, vec![to_any(font.clone()), to_any(dim.clone())]);
-        let accent_attrs =
-            NSDictionary::from_vec(&keys, vec![to_any(font.clone()), to_any(accent.clone())]);
+            NSDictionary::from_vec(&keys, vec![to_any(font.clone()), to_any(fg_dim.clone())]);
+        let muted_attrs =
+            NSDictionary::from_vec(&keys, vec![to_any(font.clone()), to_any(fg_muted.clone())]);
+        let hint_attrs = NSDictionary::from_vec(
+            &keys,
+            vec![to_any(hint_font.clone()), to_any(fg_muted.clone())],
+        );
         let style = RowStyle {
             font: font.clone(),
             advance,
-            bright_attrs: bright_attrs.clone(),
-            accent_attrs: accent_attrs.clone(),
+            fg_attrs: fg_attrs.clone(),
+            dim_attrs: dim_attrs.clone(),
         };
 
-        let prompt_y = panel_y + PADDING;
+        let prompt_y = panel_y + PAD_TOP;
         let label = NSString::from_str("pluck");
-        let label_origin = NSPoint::new(panel_x + PADDING, prompt_y + 9.0);
-        unsafe { label.drawAtPoint_withAttributes(label_origin, Some(&dim_attrs)) };
-        let label_width = unsafe { label.sizeWithAttributes(Some(&dim_attrs)) }.width;
+        let label_origin = NSPoint::new(panel_x + PAD_X, prompt_y + 9.0);
+        unsafe { label.drawAtPoint_withAttributes(label_origin, Some(&muted_attrs)) };
+        let label_width = unsafe { label.sizeWithAttributes(Some(&muted_attrs)) }.width;
 
         let sep = NSString::from_str("›");
         let sep_origin = NSPoint::new(label_origin.x + label_width + 8.0, prompt_y + 9.0);
-        unsafe { sep.drawAtPoint_withAttributes(sep_origin, Some(&dim_attrs)) };
-        let sep_width = unsafe { sep.sizeWithAttributes(Some(&dim_attrs)) }.width;
+        unsafe { sep.drawAtPoint_withAttributes(sep_origin, Some(&muted_attrs)) };
+        let sep_width = unsafe { sep.sizeWithAttributes(Some(&muted_attrs)) }.width;
 
         let query_origin = NSPoint::new(sep_origin.x + sep_width + 8.0, prompt_y + 9.0);
         let query_ns = NSString::from_str(&state.query);
-        unsafe { query_ns.drawAtPoint_withAttributes(query_origin, Some(&bright_attrs)) };
-        let query_width = unsafe { query_ns.sizeWithAttributes(Some(&bright_attrs)) }.width;
+        unsafe { query_ns.drawAtPoint_withAttributes(query_origin, Some(&fg_attrs)) };
+        let query_width = unsafe { query_ns.sizeWithAttributes(Some(&fg_attrs)) }.width;
 
         if state.cursor_visible {
             let cursor_rect = NSRect::new(
@@ -178,35 +194,43 @@ impl PluckOverlayView {
                 NSSize::new(advance.max(7.0), FONT_SIZE + 4.0),
             );
             unsafe {
-                let cursor_color =
-                    NSColor::colorWithSRGBRed_green_blue_alpha(0.40, 0.80, 1.0, 0.85);
+                let cursor_color = srgb(0x00, 0xb4, 0xff, 0.9);
                 cursor_color.set();
                 NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(cursor_rect, 2.0, 2.0)
                     .fill();
             }
         }
 
-        let mode_label = NSString::from_str(&format!("[{}]", state.mode));
-        let mode_width = unsafe { mode_label.sizeWithAttributes(Some(&dim_attrs)) }.width;
-        let mode_origin =
-            NSPoint::new(panel_x + panel_width - PADDING - mode_width, prompt_y + 9.0);
-        unsafe { mode_label.drawAtPoint_withAttributes(mode_origin, Some(&dim_attrs)) };
-
-        let sep_y = prompt_y + PROMPT_HEIGHT - 6.0;
+        let mode_label = NSString::from_str(&state.mode.to_uppercase());
+        let mode_width = unsafe { mode_label.sizeWithAttributes(Some(&hint_attrs)) }.width;
+        let mode_pad_x = 8.0;
+        let mode_pad_y = 3.0;
+        let mode_bg_rect = NSRect::new(
+            NSPoint::new(
+                panel_x + panel_width - PAD_X - mode_width - mode_pad_x * 2.0,
+                prompt_y + 8.0,
+            ),
+            NSSize::new(
+                mode_width + mode_pad_x * 2.0,
+                HINT_SIZE + mode_pad_y * 2.0 + 2.0,
+            ),
+        );
         unsafe {
-            let line_color = NSColor::colorWithSRGBRed_green_blue_alpha(0.30, 0.34, 0.42, 0.55);
-            line_color.set();
-            let line = NSBezierPath::bezierPath();
-            line.moveToPoint(NSPoint::new(panel_x + PADDING, sep_y));
-            line.lineToPoint(NSPoint::new(panel_x + panel_width - PADDING, sep_y));
-            line.setLineWidth(1.0);
-            line.stroke();
+            let chip_bg = srgb(0x26, 0x26, 0x26, 1.0);
+            chip_bg.set();
+            NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(mode_bg_rect, 4.0, 4.0).fill();
+            mode_label.drawAtPoint_withAttributes(
+                NSPoint::new(mode_bg_rect.origin.x + mode_pad_x, prompt_y + 10.0),
+                Some(&hint_attrs),
+            );
         }
 
-        let text_x = panel_x + PADDING + MARK_WIDTH;
-        let text_max_width = panel_x + panel_width - PADDING - text_x - MARK_WIDTH;
+        let rows_top = prompt_y + PROMPT_HEIGHT + SECTION_GAP;
+
+        let text_x = panel_x + PAD_X + MARK_WIDTH;
+        let text_max_width = panel_x + panel_width - PAD_X - text_x - MARK_WIDTH;
         for (i, row) in state.rows.iter().enumerate() {
-            let row_y = sep_y + 8.0 + i as f64 * ROW_HEIGHT;
+            let row_y = rows_top + i as f64 * ROW_HEIGHT;
             draw_row(
                 row,
                 panel_x,
@@ -218,30 +242,39 @@ impl PluckOverlayView {
             );
         }
 
-        let footer_y = sep_y + 8.0 + row_count as f64 * ROW_HEIGHT + 6.0;
+        let footer_y = rows_top + row_count as f64 * ROW_HEIGHT + SECTION_GAP + 8.0;
         let footer = if state.marked_count > 0 {
             format!(
-                "enter=copy({})  ctrl-m=markdown  tab=mark  ctrl-f=mode  esc=cancel",
+                "enter copy·{}    ⌃m markdown    tab mark    ⌃f mode    esc cancel",
                 state.marked_count
             )
         } else {
-            "enter=copy  ctrl-m=markdown  tab=mark  ctrl-f=mode  esc=cancel".to_string()
+            "enter copy    ⌃m markdown    tab mark    ⌃f mode    esc cancel".to_string()
         };
         let footer_ns = NSString::from_str(&footer);
+        let footer_size = unsafe { footer_ns.sizeWithAttributes(Some(&hint_attrs)) };
+        let footer_x = panel_x + (panel_width - footer_size.width) / 2.0;
         unsafe {
-            footer_ns.drawAtPoint_withAttributes(
-                NSPoint::new(panel_x + PADDING, footer_y),
-                Some(&dim_attrs),
-            )
+            footer_ns
+                .drawAtPoint_withAttributes(NSPoint::new(footer_x, footer_y), Some(&hint_attrs))
         };
     }
+}
+
+unsafe fn srgb(r: u8, g: u8, b: u8, a: f64) -> Retained<NSColor> {
+    NSColor::colorWithSRGBRed_green_blue_alpha(
+        r as f64 / 255.0,
+        g as f64 / 255.0,
+        b as f64 / 255.0,
+        a,
+    )
 }
 
 struct RowStyle {
     font: Retained<NSFont>,
     advance: f64,
-    bright_attrs: Retained<NSDictionary<NSString, AnyObject>>,
-    accent_attrs: Retained<NSDictionary<NSString, AnyObject>>,
+    fg_attrs: Retained<NSDictionary<NSString, AnyObject>>,
+    dim_attrs: Retained<NSDictionary<NSString, AnyObject>>,
 }
 
 fn draw_row(
@@ -253,27 +286,31 @@ fn draw_row(
     text_max_width: f64,
     style: &RowStyle,
 ) {
-    let bg = if row.selected {
-        Some(unsafe { NSColor::colorWithSRGBRed_green_blue_alpha(0.18, 0.32, 0.55, 0.85) })
-    } else {
-        None
-    };
-    if let Some(bg) = bg {
+    if row.selected {
+        let inset = PAD_X - 6.0;
         let row_rect = NSRect::new(
-            NSPoint::new(panel_x + 4.0, row_y - 2.0),
-            NSSize::new(panel_width - 8.0, ROW_HEIGHT - 2.0),
+            NSPoint::new(panel_x + inset, row_y + 1.0),
+            NSSize::new(panel_width - inset * 2.0, ROW_HEIGHT - 2.0),
         );
         unsafe {
-            let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(row_rect, 5.0, 5.0);
-            bg.set();
+            let fill = srgb(0x26, 0x26, 0x26, 1.0);
+            let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(row_rect, 7.0, 7.0);
+            fill.set();
             path.fill();
+
+            let bar_rect = NSRect::new(
+                NSPoint::new(panel_x + inset + 1.0, row_y + 5.0),
+                NSSize::new(SELECT_BAR_WIDTH, ROW_HEIGHT - 10.0),
+            );
+            let bar_color = srgb(0x00, 0xb4, 0xff, 1.0);
+            bar_color.set();
+            NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(bar_rect, 1.25, 1.25).fill();
         }
     }
 
     if row.marked {
         let mark = NSString::from_str("●");
-        let mark_color =
-            unsafe { NSColor::colorWithSRGBRed_green_blue_alpha(0.40, 0.90, 0.60, 1.0) };
+        let mark_color = unsafe { srgb(0x00, 0xc1, 0x5a, 1.0) };
         let keys = [unsafe { NSFontAttributeName }, unsafe {
             NSForegroundColorAttributeName
         }];
@@ -282,7 +319,7 @@ fn draw_row(
         unsafe {
             mark.drawAtPoint_withAttributes(
                 NSPoint::new(
-                    panel_x + PADDING,
+                    panel_x + PAD_X,
                     row_y + (ROW_HEIGHT - FONT_SIZE) / 2.0 - 1.0,
                 ),
                 Some(&mark_attrs),
@@ -299,9 +336,9 @@ fn draw_row(
             break;
         }
         let attrs = if matched.contains(&idx) {
-            &style.bright_attrs
+            &style.fg_attrs
         } else {
-            &style.accent_attrs
+            &style.dim_attrs
         };
         let s = NSString::from_str(&ch.to_string());
         unsafe { s.drawAtPoint_withAttributes(NSPoint::new(x, baseline_y), Some(attrs)) };
@@ -310,7 +347,7 @@ fn draw_row(
     }
 
     if row.md {
-        let md_color = unsafe { NSColor::colorWithSRGBRed_green_blue_alpha(0.55, 0.75, 0.95, 0.9) };
+        let md_color = unsafe { srgb(0x00, 0xdf, 0xdb, 1.0) };
         let keys = [unsafe { NSFontAttributeName }, unsafe {
             NSForegroundColorAttributeName
         }];
@@ -319,7 +356,7 @@ fn draw_row(
         let label = NSString::from_str("md");
         let size = unsafe { label.sizeWithAttributes(Some(&md_attrs)) };
         let origin = NSPoint::new(
-            panel_x + panel_width - PADDING - size.width,
+            panel_x + panel_width - PAD_X - size.width,
             row_y + (ROW_HEIGHT - FONT_SIZE) / 2.0 - 1.0,
         );
         unsafe { label.drawAtPoint_withAttributes(origin, Some(&md_attrs)) };

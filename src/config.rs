@@ -25,6 +25,8 @@ pub struct HotkeyConfig {
     pub pluck: Option<String>,
     #[serde(rename = "warp", default)]
     pub warp: Option<String>,
+    #[serde(rename = "focus-window", default)]
+    pub focus_window: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]

@@ -216,6 +216,7 @@ pub fn build_bindings(config: &HotkeyConfig) -> Result<Vec<HotkeyBinding>> {
         (&config.menu_search, Command::MenuSearch),
         (&config.pluck, Command::Pluck),
         (&config.warp, Command::Warp),
+        (&config.focus_window, Command::FocusWindow),
     ];
     for (maybe_pattern, command) in optional {
         if let Some(pattern) = maybe_pattern {
@@ -992,9 +993,10 @@ mod tests {
             menu_search: Some("alt-cmd-shift-p".to_string()),
             pluck: Some("alt-cmd-shift-o".to_string()),
             warp: Some("alt-cmd-shift-w".to_string()),
+            focus_window: Some("alt-cmd-shift-z".to_string()),
         };
         let bindings = build_bindings(&config).unwrap();
-        assert_eq!(bindings.len(), 18);
+        assert_eq!(bindings.len(), 19);
 
         let scenes = bindings
             .iter()
@@ -1003,5 +1005,6 @@ mod tests {
         assert_eq!(scenes, 10);
         assert!(bindings.iter().any(|b| b.command == Command::HintMode));
         assert!(bindings.iter().any(|b| b.command == Command::TextSelect));
+        assert!(bindings.iter().any(|b| b.command == Command::FocusWindow));
     }
 }

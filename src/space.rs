@@ -29,6 +29,7 @@ pub struct SpaceManager<B: WindowBridge> {
     app_layout: BTreeMap<String, (SpaceId, usize, f64)>,
     config_spaces: BTreeSet<SpaceId>,
     hide_titles: Vec<String>,
+    zoomed: HashMap<SpaceId, WindowId>,
 }
 
 impl<B: WindowBridge> SpaceManager<B> {
@@ -63,6 +64,7 @@ impl<B: WindowBridge> SpaceManager<B> {
             app_layout,
             config_spaces,
             hide_titles,
+            zoomed: HashMap::new(),
         }
     }
 
@@ -89,9 +91,14 @@ impl<B: WindowBridge> SpaceManager<B> {
     }
 
     pub fn retile_active_space(&mut self) {
+        let zoomed = self.zoomed.get(&self.active_space).copied();
         if let Some(layout) = self.spaces.get(&self.active_space) {
+            let zoom_layout = zoomed.map(|window_id| LayoutTree {
+                columns: vec![Column::new(window_id)],
+            });
+            let visible = zoom_layout.as_ref().unwrap_or(layout);
             let frames =
-                compute_layout_with_gaps(self.screen_rect, layout, self.outer_gap, self.inner_gap);
+                compute_layout_with_gaps(self.screen_rect, visible, self.outer_gap, self.inner_gap);
             log::debug!(
                 "retile space {}: {} columns, {} windows, screen={}x{}",
                 self.active_space,
@@ -115,6 +122,42 @@ impl<B: WindowBridge> SpaceManager<B> {
                 }
             }
         }
+        if let Some(window_id) = zoomed {
+            for other in self.windows_hidden_by_zoom(self.active_space, window_id) {
+                let _ = self.bridge.hide(other);
+            }
+        }
+    }
+
+    fn windows_hidden_by_zoom(&self, space_id: SpaceId, zoomed: WindowId) -> Vec<WindowId> {
+        let zoomed_app = self.window_to_app.get(&zoomed);
+        self.spaces
+            .get(&space_id)
+            .map(|layout| {
+                layout
+                    .columns
+                    .iter()
+                    .flat_map(|col| col.windows.iter().copied())
+                    .filter(|&wid| wid != zoomed && self.window_to_app.get(&wid) != zoomed_app)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn toggle_zoom(&mut self, window_id: WindowId) -> bool {
+        let Some(&space_id) = self.window_to_space.get(&window_id) else {
+            return false;
+        };
+        if self.zoomed.get(&space_id) == Some(&window_id) {
+            self.zoomed.remove(&space_id);
+        } else {
+            self.zoomed.insert(space_id, window_id);
+        }
+        log::info!("zoom space {space_id}: {:?}", self.zoomed.get(&space_id));
+        if space_id == self.active_space {
+            self.retile_active_space();
+        }
+        true
     }
 
     fn hide_space_windows(&mut self, space_id: SpaceId) {
@@ -181,19 +224,30 @@ impl<B: WindowBridge> SpaceManager<B> {
     }
 
     pub fn prepare_app_activation(&mut self, app_name: &str) -> bool {
-        let matched = self.window_to_app.iter().find_map(|(window_id, tracked_name)| {
-            if tracked_name.eq_ignore_ascii_case(app_name) {
-                self.window_to_space
-                    .get(window_id)
-                    .copied()
-                    .map(|space| (*window_id, space))
-            } else {
-                None
-            }
-        });
+        let matched = self
+            .window_to_app
+            .iter()
+            .find_map(|(window_id, tracked_name)| {
+                if tracked_name.eq_ignore_ascii_case(app_name) {
+                    self.window_to_space
+                        .get(window_id)
+                        .copied()
+                        .map(|space| (*window_id, space))
+                } else {
+                    None
+                }
+            });
         let Some((window_id, target)) = matched else {
             return false;
         };
+        let zoomed_on_other_app = self.zoomed.get(&target).is_some_and(|zoomed| {
+            self.window_to_app
+                .get(zoomed)
+                .is_none_or(|zoomed_app| !zoomed_app.eq_ignore_ascii_case(app_name))
+        });
+        if zoomed_on_other_app {
+            self.zoomed.remove(&target);
+        }
         self.per_space_focus.insert(target, window_id);
         self.switch_space_with_focus(target, true);
         true
@@ -222,6 +276,10 @@ impl<B: WindowBridge> SpaceManager<B> {
             self.per_space_focus.remove(&space_id);
         }
 
+        if self.zoomed.get(&space_id) == Some(&window_id) {
+            self.zoomed.remove(&space_id);
+        }
+
         let is_empty = self.spaces.get(&space_id).is_none_or(|l| l.is_empty());
         if is_empty && !self.config_spaces.contains(&space_id) {
             self.spaces.remove(&space_id);
@@ -231,6 +289,13 @@ impl<B: WindowBridge> SpaceManager<B> {
     pub fn handle_focus_changed(&mut self, window_id: WindowId) {
         if let Some(&space_id) = self.window_to_space.get(&window_id) {
             self.per_space_focus.insert(space_id, window_id);
+            if self
+                .zoomed
+                .get(&space_id)
+                .is_some_and(|&zoomed| zoomed != window_id)
+            {
+                self.zoomed.remove(&space_id);
+            }
             if space_id != self.active_space {
                 log::info!("focus changed to window {window_id} on space {space_id}, switching from space {}", self.active_space);
                 self.switch_space_with_focus(space_id, false);
@@ -250,16 +315,12 @@ impl<B: WindowBridge> SpaceManager<B> {
         self.retile_active_space();
 
         if reissue_focus {
-            let focus_target = self
-                .per_space_focus
-                .get(&target)
-                .copied()
-                .or_else(|| {
-                    self.spaces
-                        .get(&target)
-                        .and_then(|layout| layout.columns.first())
-                        .and_then(|col| col.windows.first().copied())
-                });
+            let focus_target = self.per_space_focus.get(&target).copied().or_else(|| {
+                self.spaces
+                    .get(&target)
+                    .and_then(|layout| layout.columns.first())
+                    .and_then(|col| col.windows.first().copied())
+            });
             if let Some(window_id) = focus_target {
                 let _ = self.bridge.focus(window_id);
             }
@@ -336,6 +397,10 @@ impl<B: WindowBridge> SpaceManager<B> {
         for sid in empty_non_config {
             self.spaces.remove(&sid);
         }
+
+        let window_to_space = &self.window_to_space;
+        self.zoomed
+            .retain(|space_id, window_id| window_to_space.get(window_id) == Some(space_id));
 
         self.retile_active_space();
     }
@@ -696,6 +761,109 @@ mod tests {
             .iter()
             .any(|c| matches!(c, MockCall::ApplyFrameHiding(..))));
         assert!(calls.iter().any(|c| matches!(c, MockCall::Hide(200))));
+    }
+
+    #[test]
+    fn zoom_fills_screen_and_hides_other_windows_in_space() {
+        let mut mgr = make_manager();
+        mgr.handle_window_created(100, "Zen Browser", 0);
+        mgr.handle_window_created(101, "Ghostty", 0);
+        mgr.bridge.take_calls();
+
+        assert!(mgr.toggle_zoom(101));
+        let calls = mgr.bridge.take_calls();
+        assert!(calls.contains(&MockCall::ApplyFrame(101, screen())));
+        assert!(calls.contains(&MockCall::Hide(100)));
+        assert!(!calls
+            .iter()
+            .any(|c| matches!(c, MockCall::ApplyFrame(100, _))));
+    }
+
+    #[test]
+    fn zoom_toggle_restores_tiled_layout() {
+        let mut mgr = make_manager();
+        mgr.handle_window_created(100, "Zen Browser", 0);
+        mgr.handle_window_created(101, "Ghostty", 0);
+        mgr.toggle_zoom(101);
+        mgr.bridge.take_calls();
+
+        assert!(mgr.toggle_zoom(101));
+        let calls = mgr.bridge.take_calls();
+        let half = Rect {
+            x: 960.0,
+            y: 0.0,
+            width: 960.0,
+            height: 1080.0,
+        };
+        assert!(calls.contains(&MockCall::ApplyFrame(101, half)));
+        assert!(calls
+            .iter()
+            .any(|c| matches!(c, MockCall::ApplyFrame(100, _))));
+        assert!(!calls.iter().any(|c| matches!(c, MockCall::Hide(_))));
+    }
+
+    #[test]
+    fn zoom_does_not_hide_windows_of_the_same_app() {
+        let mut mgr = make_manager();
+        mgr.handle_window_created(100, "Zen Browser", 0);
+        mgr.handle_window_created(102, "Zen Browser", 0);
+        mgr.bridge.take_calls();
+
+        mgr.toggle_zoom(100);
+        let calls = mgr.bridge.take_calls();
+        assert!(!calls.iter().any(|c| matches!(c, MockCall::Hide(_))));
+    }
+
+    #[test]
+    fn focusing_another_window_in_zoomed_space_clears_zoom() {
+        let mut mgr = make_manager();
+        mgr.handle_window_created(100, "Zen Browser", 0);
+        mgr.handle_window_created(101, "Ghostty", 0);
+        mgr.toggle_zoom(101);
+
+        mgr.handle_focus_changed(100);
+        assert!(!mgr.zoomed.contains_key(&1));
+    }
+
+    #[test]
+    fn refocusing_zoomed_window_keeps_zoom() {
+        let mut mgr = make_manager();
+        mgr.handle_window_created(101, "Ghostty", 0);
+        mgr.handle_window_created(200, "Slack", 0);
+        mgr.toggle_zoom(101);
+
+        mgr.handle_focus_changed(200);
+        mgr.handle_focus_changed(101);
+        assert_eq!(mgr.zoomed.get(&1), Some(&101));
+    }
+
+    #[test]
+    fn activating_other_app_in_zoomed_space_clears_zoom() {
+        let mut mgr = make_manager();
+        mgr.handle_window_created(100, "Zen Browser", 0);
+        mgr.handle_window_created(101, "Ghostty", 0);
+        mgr.toggle_zoom(101);
+
+        assert!(mgr.prepare_app_activation("Zen Browser"));
+        assert!(!mgr.zoomed.contains_key(&1));
+    }
+
+    #[test]
+    fn destroying_zoomed_window_clears_zoom() {
+        let mut mgr = make_manager();
+        mgr.handle_window_created(100, "Zen Browser", 0);
+        mgr.handle_window_created(101, "Ghostty", 0);
+        mgr.toggle_zoom(101);
+
+        mgr.handle_window_destroyed(101);
+        assert!(mgr.zoomed.is_empty());
+    }
+
+    #[test]
+    fn zoom_ignores_untracked_window() {
+        let mut mgr = make_manager();
+        assert!(!mgr.toggle_zoom(999));
+        assert!(mgr.zoomed.is_empty());
     }
 
     #[test]

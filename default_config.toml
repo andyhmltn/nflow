@@ -7,6 +7,7 @@ scroll-mode = "cmd-shift-i"
 menu-search = "alt-cmd-shift-p"
 pluck = "alt-cmd-shift-o"
 warp = "alt-cmd-shift-h"
+focus-window = "alt-cmd-shift-z"
 apply-scene = "alt-ctrl-{n}"
 
 terminal = "Ghostty"
